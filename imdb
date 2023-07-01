@@ -1,0 +1,787 @@
+#!/usr/bin/env ruby
+# encoding: utf-8
+
+# PROGRAM INFO 
+# Name:       IMDB-term
+# Language:   Pure Ruby, best viewed in VIM
+# Author:     Geir Isene <g@isene.com>
+# Web_site:   http://isene.com/
+# Github:     https://github.com/isene/imdb-term
+# License:    I release all copyright claims. This code is in the public domain.
+#             Permission is granted to use, copy modify, distribute, and sell
+#             this software for any purpose. I make no guarantee about the
+#             suitability of this software for any purpose and I am not liable
+#             for any damages resulting from its use. Further, I am under no
+#             obligation to maintain or extend this software. It is provided 
+#             on an 'as is' basis without any expressed or implied warranty.
+
+# PRELIMINARIES
+@help = <<HELPTEXT
+IMDB-term (https://github.com/isene/IMDB) Help text:
+
+Keys       | Function
+-----------+--------------------
+TAB        | Cycle the panes (active pane is gray)
+Shift-TAB  | Cycle backward
+Arrow keys | UP, DOWN, PgUP, PgDOWN, HOME, END in lists
++ or -     | Depends on pane (intuitive)
+I          | Load fresh IMDB data (be patient)
+m or s     | Show MOVIES or SERIES
+r          | Select MINimum IMDB rating (in bottom line)
+y or Y     | Select MINimum or MAXimum production year
+/ or \\     | Enter or clear search for movie/series title
+G          | Set genres to match every movie/series
+d          | Get details on selected movie/series
+D          | Show where you can stream the movie/series
+R          | Refresh all panes
+w or W     | Write changes to config or save IMDB data
+q or Q     | Quit w/saving config or w/o saving config
+HELPTEXT
+begin # BASIC SETUP
+  require 'net/http'
+  require 'open-uri'
+  require 'rest_client'
+  require 'json'
+  require 'readline'
+  require 'io/console'
+  require 'curses'
+  include  Curses
+
+  def cmd?(command)
+    system("which #{command} > /dev/null 2>&1")
+  end
+  if cmd?('/usr/lib/w3m/w3mimgdisplay')
+    @w3mimgdisplay = "/usr/lib/w3m/w3mimgdisplay"
+    @showimage = true
+  else
+    @showimage = false
+  end
+  @showimage = false unless (cmd?('xwininfo') and cmd?('xdotool'))
+
+  begin # Check if network is available
+    URI.open("https://www.google.com/", :open_timeout=>5)
+  rescue
+    puts "\nNo network. Running offline.\n\n"
+  end
+
+  # INITIALIZE BASIC VARIABLES 
+  ## These can be set in .imdb.conf
+  @rating     = 0
+  @yearMin    = 0
+  @yearMax    = 2100
+  @myMY       = []
+  @myMN       = []
+  @mySY       = []
+  @mySN       = []
+  ## These are IMDB specific
+  @urlmovies  = "https://www.imdb.com/search/title/?groups=top_1000&start=[1, 1001, 50]"
+  @urlseries  = "https://www.imdb.com/search/title/?title_type=tv_series&start=[1, 1001, 50]"
+  @country    = "no"
+  @lang       = "en"
+  @genres     = ["Action", "Adult", "Adventure", "Animation", "Biography", "Comedy", "Crime", "Documentary", "Drama",
+                "Family", "Fantasy", "Film Noir", "Game Show", "History", "Horror", "Musical", "Music", "Mystery", 
+                "News", "Reality-TV", "Romance", "Sci-Fi", "Short", "Sport", "Talk-Show", "Thriller", "War", "Western"]
+  @genY       = @genres.map(&:clone)
+  @genN       = []
+  ## These are internal variables
+  @imdbmovies = []
+  @imdbseries = []
+  @imdbsel    = []
+  @search     = ''
+  @new        = false 
+  @movies     = true
+  @noimage    = false
+  
+  ## Color constants (e.g. Window x fg)
+  WtMfg  = 232
+  WtSfg  = 255
+  WtMbg  = 214
+  WtMbgS = 202
+  WtSbg  =  23
+  WtSbgS =  58
+  Wifg   = 230
+  Wgfg   = 195
+  WgYfg  =  34
+  WgNfg  = 241
+  Wmfg   = 117
+  Wnfg   = 204
+  Wdfg   = 255
+  Wpfg   = 242
+  Wbfg   = 252
+  Wbbg   = 238
+  Mark   = 240
+  WAbg   = 233
+  WIbg   = 232
+end
+
+# CLASSES
+class Curses::Window # CLASS EXTENSION 
+  attr_accessor :fg, :bg, :attr, :text, :index, :list, :update
+  # General extensions (see https://github.com/isene/Ruby-Curses-Class-Extension)
+  def clr
+    self.setpos(0, 0)
+    self.maxy.times {self.deleteln()}
+    self.refresh
+    self.setpos(0, 0)
+  end
+  def fill # Fill window with color as set by :bg
+    self.setpos(0, 0)
+    self.bg = 0 if self.bg   == nil
+    self.fg = 255 if self.fg == nil
+    xor = self.fg ^ self.bg
+    init_pair(xor, self.fg, self.bg)
+    blank = " " * self.maxx
+    self.maxy.times {self.attron(color_pair(xor)) {self << blank}}
+    self.refresh
+    self.setpos(0, 0)
+  end
+  def write # Write context of :text to window with attributes :attr
+    self.bg   = 0 if self.bg   == nil
+    self.fg   = 255 if self.fg == nil
+    xor = self.fg ^ self.bg
+    init_pair(xor, self.fg, self.bg)
+    self.attr = 0 if self.attr == nil
+    self.attron(color_pair(xor) | self.attr) { self << self.text }
+    self.refresh
+    self.text = ""
+  end
+  def p(fg, bg, attr, text)
+    init_pair(fg ^ bg, fg, bg)
+    self.attron(color_pair(fg ^ bg) | attr) { self << text }
+    self.refresh
+  end
+end
+
+# GENERIC FUNCTIONS 
+def firstrun
+  puts  "Welcome to IMDB-term, the IMDB application for the terminal."
+  puts  "\nFind your next movie or series to binge. Narrow down your preferences from a 1000 movies and almost 500 series."
+  puts  "Select a minimum IMDB rating, range of production years, genres you like and dislike to get your preferred list."
+  puts  "Get detailed information on movies and series and where you can stream them. Even the movie poster in the terminal."
+  puts  "\nLet's first look at the help text (accessible in the program via the key '?'):\n\n"
+  puts  @help
+  print "\nPress any key... "; STDIN.getch
+  system("clear")
+  puts  "We will now walk you through the steps you need to do to make use of this application:"
+  puts  "\n 1. Go to the website https://www.page2api.com/"
+  print "    Create a free account and paste your API_KEY here (then press ENTER): "
+  conf  = "@imdbkey = '" 
+  conf += gets.chomp + "'\n"
+  puts  "\n 2. Go to the website https://www.omdbapi.com/apikey.aspx"
+  print "    Create a free account and paste your API KEY here (then press ENTER): "
+  conf += "@omdbkey = '" 
+  conf += gets.chomp + "'\n"
+  puts  "\n 3. Go to the website https://rapidapi.com/movie-of-the-night-movie-of-the-night-default/api/streaming-availability"
+  print "    Create a free account and paste your X-RapidAPI-Key here (then press ENTER): "
+  conf += "@streamkey = '" 
+  conf += gets.chomp + "'\n"
+  File.write(Dir.home+'/.imdb.conf', conf)
+  puts "\n\nYour keys have now been written to the configuration file (.imdb.conf). You can edit this file manually if needed."
+  print "\nPress 'y' to start imdb-term "; y = STDIN.getch
+  exit if y != "y"
+end
+def getchr # PROCESS KEY PRESSES
+  c = STDIN.getch #(min: 0, time: 1) 
+  case c
+  when "\e"    # ANSI escape sequences
+    case $stdin.getc
+    when '['   # CSI
+      case $stdin.getc
+      when 'A' then chr = "UP"
+      when 'B' then chr = "DOWN"
+      when 'C' then chr = "RIGHT"
+      when 'D' then chr = "LEFT"
+      when 'Z' then chr = "S-TAB"
+      when '2' then chr = "INS"    ; STDIN.getc
+      when '3' then chr = "DEL"    ; STDIN.getc
+      when '5' then chr = "PgUP"   ; STDIN.getc
+      when '6' then chr = "PgDOWN" ; STDIN.getc
+      when '7' then chr = "HOME"   ; STDIN.getc
+      when '8' then chr = "END"    ; STDIN.getc
+      end
+    end
+  when "", "" then chr = "BACK"
+  when "" then chr = "C-C"
+  when "" then chr = "C-G"
+  when "" then chr = "C-T"
+  when "" then chr = "LDEL"
+  when "" then chr = "WBACK"
+  when "\r" then chr = "ENTER"
+  when "\t" then chr = "TAB"
+  when /./  then chr = c
+  end
+  return chr
+end
+def getkey # GET KEY FROM USER
+  chr = getchr
+  case chr
+  when '?' # Show helptext in right window 
+    @w_d.fill
+    @w_d.text = @help
+    @w_d.write
+    @w_d.update = false
+  when 'UP'
+    @active.index = @active.index <= 0 ? @active.list.size - 1 : @active.index - 1
+  when 'DOWN'
+    @active.index = @active.index >= @active.list.size - 1 ? 0 : @active.index + 1
+  when 'PgUP'
+    @active.index -= @active.maxy - 2
+    @active.index = 0 if @active.index < 0
+  when 'PgDOWN'
+    @active.index += @active.maxy - 2
+    @active.index = @active.list.size - 1 if @active.index > @active.list.size
+  when 'HOME'
+    @active.index = 0
+  when 'END'
+    @active.index = @active.list.size - 1
+  when 'TAB'
+    case @active
+    when @w_i
+      @active = @w_g
+    when @w_g
+      @active = @w_m 
+    when @w_m
+      @active = @w_n
+    when @w_n
+      @active = @w_i
+    end
+  when 'S-TAB'
+    case @active
+    when @w_i
+      @active = @w_n
+    when @w_n
+      @active = @w_m
+    when @w_m
+      @active = @w_g
+    when @w_g
+      @active = @w_i 
+    end
+  when 'I'
+    w_b("Loading IMDB data...")
+    loadimdb
+  when 'm'
+    @movies  = true
+  when 's'
+    @movies  = false
+  when 'r'
+    r = w_b_getstr(" Set MINimum Rating: ", "")
+    @rating  = r.to_f unless r == ""
+  when 'y'
+    y = w_b_getstr(" Set MINimum Year: ", "")
+    @yearMin = y.to_i unless y == ""
+  when 'Y'
+    y = w_b_getstr(" Set MAXimum Year: ", "")
+    @yearMax = y.to_i unless y == ""
+  when '/'
+    @search  = w_b_getstr(" Search for title: ", "")
+  when '\\'
+    @search  = ''
+  when 'G'
+    @genY    = @genres.map(&:clone)
+    @genN    = []
+  when '+'
+    case @active
+    when @w_i
+      @myY.push(@active.list[@active.index])
+      @active.index = 0 if @active.index > @active.list.size - 2
+    when @w_g
+      @genY.push(@active.list[@active.index]) unless @genN.include?(@active.list[@active.index])
+      @genN.delete(@active.list[@active.index])
+      @active.index = @active.index >= @active.list.size - 1 ? 0 : @active.index + 1
+    when @w_m
+      @myN.delete(@active.list[@active.index])
+    when @w_n
+      @myY.push(@active.list[@active.index])
+      @myN.delete(@active.list[@active.index])
+      @active.index -= 1 if @active.index == @active.list.size
+    end
+  when '-'
+    case @active
+    when @w_i
+      @myN.push(@active.list[@active.index])
+      @active.index = 0 if @active.index > @active.list.size - 2
+    when @w_g
+      @genN.push(@active.list[@active.index]) unless @genY.include?(@active.list[@active.index])
+      @genY.delete(@active.list[@active.index])
+      @active.index = @active.index >= @active.list.size - 1 ? 0 : @active.index + 1
+    when @w_m
+      @myY.delete(@active.list[@active.index])
+      @active.index -= 1 if @active.index == @active.list.size
+    when @w_n
+      @myN.delete(@active.list[@active.index])
+      @active.index -= 1 if @active.index == @active.list.size
+    end
+  when 'd'
+    @w_d.fill
+    w_d(1)
+    @w_d.update = false
+  when 'D'
+    @w_d.fill
+    w_d(2)
+    @w_d.update = false
+  when 'R' # Refresh all windows 
+    @break = true
+  when '@' # Enter "Ruby debug"
+    cmd = w_b_getstr("◆ ", "")
+    begin
+      @w_b.text = eval(cmd)
+      @w_b.fill
+      @w_b.write
+    rescue StandardError => e
+      w_b("Error: #{e.inspect}")
+    end
+    @w_b.update = false
+  when 'w'
+    saveconf
+  when 'W'
+    saveimdb
+  when 'q' # Exit 
+    saveconf
+    exit 0
+  when 'Q' # EXIT 
+    exit 0
+  end
+end
+def getimdb(url)
+  api_url = "https://www.page2api.com/api/v1/scrape"
+  payload = {
+    api_key: @imdbkey,
+    batch: {
+      urls: url,
+      concurrency: 1,
+      merge_results: true
+    },
+    parse: {
+      movies: [
+        {
+          title: ".lister-item-header >> text",
+          url: ".lister-item-header a >> href",
+          id: ".userRatingValue >> data-tconst",
+          year: ".lister-item-year >> text",
+          genre: ".genre >> text",
+          votes: "[name=nv] >> text",
+          rating: ".ratings-imdb-rating >> data-value",
+          _parent: ".lister-item",
+          runtime: ".runtime >> text",
+          certificate: ".certificate >> text"
+        }
+      ]
+    },
+    datacenter_proxy: "us"
+  }
+  response = RestClient::Request.execute(
+    method: :post,
+    payload: payload.to_json,
+    url: api_url,
+    headers: { "Content-type" => "application/json" },
+  ).body
+  res = JSON.parse(response)
+  imdb = []
+  res["result"]["movies"].each {|m| imdb.push [m["title"].sub(/^\d+\. /, ''), m["rating"].to_f, m["year"].delete("^0-9").to_i, m["genre"], m["id"]]}
+  imdb
+end
+def loadimdb
+  @imdbmovies = getimdb(@urlmovies)
+  @imdbseries = getimdb(@urlseries)
+  @new = true
+end
+def imdbmovies
+  if @search == ''
+    @imdbsel = @imdbmovies.map{|m| m if (m[1] >= @rating) and ((@yearMin..@yearMax) === m[2])}
+  else
+    @imdbsel = @imdbmovies.map{|m| m if (m[0] =~ /#{@search}/)}
+  end
+  @imdbsel.select! do |i| 
+    ig = i[3].split(", ") unless i == nil 
+    (ig & @genY).any? unless ig == nil
+  end
+  @imdbsel.select! {|i| (i[3].split(", ") & @genN).empty?}
+  @imdbsel = @imdbsel - @myMN - @myMY
+  @myMYsel = @myMY - @myMN
+  [@imdbsel, @myMYsel, @myMY, @myMN, @genY, @genN].each do |arr|
+    arr.uniq!
+    arr.compact!
+    arr.sort_by! {|m| m[0]}
+  end
+  @w_i.list  = @imdbsel
+  @w_i.index = 0 if @w_i.index > @w_i.list.size - 2
+  @w_m.list  = @myMYsel
+  @w_n.list  = @myMN
+  @myN       = @myMN
+  @myY       = @myMY
+end
+def imdbseries
+  if @search == ''
+    @imdbsel = @imdbseries.map{|m| m if (m[1] > @rating) and ((@yearMin..@yearMax) === m[2])}
+  else
+    @imdbsel = @imdbseries.map{|m| m if (m[0] =~ /#{@search}/)}
+  end
+  @imdbsel.select! do |i| 
+    ig = i[3].split(", ") unless i == nil 
+    (ig & @genY).any? unless ig == nil
+  end
+  @imdbsel.select! {|i| (i[3].split(", ") & @genN).empty?}
+  @imdbsel = @imdbsel - @mySN - @mySY
+  @mySYsel = @mySY - @mySN
+  [@imdbsel, @mySYsel, @mySY, @mySN, @genY, @genN].each do |arr|
+    arr.uniq!
+    arr.compact!
+    arr.sort_by! {|m| m[0]}
+  end
+  @w_i.list  = @imdbsel
+  @w_i.index = 0 if @w_i.index > @w_i.list.size - 2
+  @w_m.list  = @mySYsel
+  @w_n.list  = @mySN
+  @myN       = @mySN
+  @myY       = @mySY
+end
+def getomdb(id)
+  @urldetails = "http://www.omdbapi.com/?apikey=#{@omdbkey}&i=#{id}"
+  details = Net::HTTP.get(URI(@urldetails))
+  det     = JSON.parse(details)
+  return det
+end
+def getstreaming(id) # Returns array of outlets
+  url = URI("https://streaming-availability.p.rapidapi.com/v2/get/basic?country=#{@country}&imdb_id=#{id}&output_language=#{@lang}")
+  http = Net::HTTP.new(url.host, url.port)
+  http.use_ssl = true
+  request = Net::HTTP::Get.new(url)
+  request["X-RapidAPI-Key"] = @streamkey
+  request["X-RapidAPI-Host"] = 'streaming-availability.p.rapidapi.com'
+  response = http.request(request)
+  res      = JSON.parse(response.read_body)
+  outlets  = []
+  begin
+    res["result"]["streamingInfo"][@country].each{|k,v| outlets.push(k)}
+    return outlets
+  rescue
+    return ["No outlet info"]
+  end
+end
+def saveconf
+  if File.exist?(Dir.home+'/.imdb.conf')
+    conf = File.read(Dir.home+'/.imdb.conf')
+  else
+    conf = ""
+  end
+  conf.gsub!(/^@rating.*\n/, "") 
+  conf += "@rating = #{@rating}\n"
+  conf.gsub!(/^@yearMin.*\n/, "") 
+  conf += "@yearMin = #{@yearMin}\n"
+  conf.gsub!(/^@yearMax.*\n/, "") 
+  conf += "@yearMax = #{@yearMax}\n"
+  conf.gsub!(/^@genY.*\n/, "") 
+  conf += "@genY = #{@genY}\n"
+  conf.gsub!(/^@genN.*\n/, "") 
+  conf += "@genN = #{@genN}\n"
+  conf.gsub!(/^@myMY.*\n/, "") 
+  conf += "@myMY = #{@myMY}\n"
+  conf.gsub!(/^@myMN.*\n/, "") 
+  conf += "@myMN = #{@myMN}\n"
+  conf.gsub!(/^@mySY.*\n/, "") 
+  conf += "@mySY = #{@mySY}\n"
+  conf.gsub!(/^@mySN.*\n/, "") 
+  conf += "@mySN = #{@mySN}\n"
+  w_b("Configuration written to .imdb.conf")
+  File.write(Dir.home+'/.imdb.conf', conf)
+end
+def saveimdb
+  if File.exist?(Dir.home+'/.imdb')
+    data = File.read(Dir.home+'/.imdb')
+  else
+    data = ""
+  end
+  data.gsub!(/^@imdbmovies.*\n/, "") 
+  data += "@imdbmovies = #{@imdbmovies}\n"
+  data.gsub!(/^@imdbseries.*\n/, "") 
+  data += "@imdbseries = #{@imdbseries}\n"
+  w_b("IMDB data written to .imdb")
+  File.write(Dir.home+'/.imdb', data)
+end
+
+# BASIC WINDOW FUNCTIONS 
+def w_t # SHOW INFO IN @w_t
+  @movies ? @w_t.text  = " MOVIES ::  " : @w_t.text  = " SERIES ::  "
+  @w_t.text += "Rating MIN: #{@rating} - Year MIN: #{@yearMin} - Year MAX: #{@yearMax} :: Selection = #{@imdbsel.size}"
+  @w_t.write
+end
+def w_list(win) # LIST IN WINDOW
+  win == @active ? win.bg = WAbg : win.bg = WIbg
+  win.fill
+  ix = 0
+  ix = win.index - win.maxy/2 if win.index > win.maxy/2 and win.list.size > win.maxy - 1
+  while ix < win.list.size and ix < win.maxy do
+    str  = win.list[ix][0]
+    str  = win.list[ix] if win == @w_g
+    if ix == win.index and win == @active
+      win.text = "→ "
+      win.write
+    else
+      win.attr = 0
+      win.text = "  "
+      win.write
+    end
+    if win == @w_g
+      if @genY.include?(str)
+        win.text = "+"
+        win.fg   = WgYfg
+        win.attr = Curses::A_BOLD
+        win.write
+      elsif @genN.include?(str)
+        win.text = "-"
+        win.fg   = WgNfg
+        win.write
+      else
+        win.text = " "
+        win.write
+        win.fg   = Wgfg
+      end
+    end
+    win.attr = win.attr | Curses::A_UNDERLINE if ix == win.index
+    str      = str[0..(win.maxx - 6)] + "…" if str.length > win.maxx - 4
+    win.text = str
+    win.write
+    win.attr = 0
+    win.text = " " * (win.maxx - str.length - 2)
+    win.text = win.text[0..-2] if win == @w_g
+    win.write
+    ix += 1
+  end
+  if win.index > win.maxy/2
+    win.setpos(0, win.maxx - 1)
+    win.text = "∆"
+    fg0      = win.fg
+    win.fg   = Mark
+    win.write
+    win.fg   = fg0
+  end
+  if win.list.length > win.maxy - 1 and win.list.length > win.index + win.maxy/2 - 1
+    win.setpos(win.maxy - 1, win.maxx - 1)
+    win.text = "∇"
+    fg0      = win.fg
+    win.fg   = Mark
+    win.write
+    win.fg   = fg0
+  end
+end
+def w_d(ext = 0) # SHOW INFO IN @w_d and @w_p
+  return if @active == @w_g 
+  list = @active.list
+  return if list.empty? # Skip if list is empty
+  id  = list[@active.index][4] 
+  @w_d.text  = "#{list[@active.index][0]}\n\n"
+  @w_d.attr  = Curses::A_BOLD
+  @w_d.write
+  @w_d.attr  = 0
+  @w_d.text += "Rating:    " + list[@active.index][1].to_s.ljust(14) + "Genres:  #{list[@active.index][3]}\n"
+  @w_d.write
+  return unless ext > 0 # Skip if no details are to be displayed
+  det = getomdb(id)
+  otl = getstreaming(id)
+  @w_d.text  = "Rated:     " + det["Rated"].ljust(14)                + "Runtime: #{det["Runtime"]}"
+  @w_d.text += " (#{det["totalSeasons"]})" unless det["totalSeasons"] == nil
+  @w_d.text += "\n"
+  @w_d.text += "Released:  " + det["Released"].ljust(14) + "(#{id})\n\n"
+  width      = Curses.cols - 104
+  @w_d.text += det["Plot"].gsub!(/(.{1,#{width}})( +|$\n?)|(.{1,#{width}})/, "\\1\\3\n")
+  @w_d.text += "\n"
+  @w_d.text += "Awards:    " + det["Awards"]    + "\n"
+  @w_d.text += "Director:  " + det["Director"]  + "\n"
+  @w_d.text += "Actors:    " + det["Actors"]    + "\n\n"
+  @w_d.text += "Metascore: " + det["Metascore"] + "\n\n"
+  outlets    = ""
+  @w_d.write
+  # Display the poster
+  poster     = det["Poster"]
+  `curl -s "#{poster}" > /tmp/imdb.jpg`
+  image      = "/tmp/imdb.jpg"
+  begin
+    terminfo    = `xwininfo -id $(xdotool getactivewindow)`
+    term_w      = terminfo.match(/Width: (\d+)/)[1].to_i
+    term_h      = terminfo.match(/Height: (\d+)/)[1].to_i
+    char_w      = term_w / Curses.cols
+    char_h      = term_h / Curses.lines
+    img_x       = char_w * 105
+    img_y       = char_h * (Curses.lines / 2 + 2)
+    img_max_w   = char_w * (Curses.cols - width - 2)
+    img_max_h   = char_h * (@w_d.maxy - 2)
+    # Clear previous images
+    `echo "6;#{img_x};#{img_y};#{img_max_w+2};#{img_max_h+2};\n4;\n3;" | #{@w3mimgdisplay} 2>/dev/null`
+    img_w,img_h = `identify -format "%[fx:w]x%[fx:h]" #{image} 2>/dev/null`.split('x')
+    img_w       = img_w.to_i
+    img_h       = img_h.to_i
+    if img_w > img_max_w
+      img_h = img_h * img_max_w / img_w 
+      img_w = img_max_w
+    end
+    if img_h > img_max_h
+      img_w = img_w * img_max_h / img_h
+      img_h = img_max_h
+    end
+    `echo "0;1;#{img_x};#{img_y};#{img_w};#{img_h};;;;;\"#{image}\"\n4;\n3;" | #{@w3mimgdisplay} 2>/dev/null`
+  rescue
+    w_b("Error showing image")
+  end
+  return unless ext > 1 # Skip if no outlets are to be displayed
+  otl.each{|o| outlets += "#{o}  "}
+  @w_d.text += "Outlets:   " + outlets
+  @w_d.write
+end
+def imageclear
+  begin
+    terminfo    = `xwininfo -id $(xdotool getactivewindow)`
+    term_w      = terminfo.match(/Width: (\d+)/)[1].to_i
+    term_h      = terminfo.match(/Height: (\d+)/)[1].to_i
+    char_w      = term_w / Curses.cols
+    char_h      = term_h / Curses.lines
+    img_x       = char_w * 105
+    img_y       = char_h * (Curses.lines / 2 + 2)
+    img_max_w   = char_w * (Curses.cols - (Curses.cols - 104) - 2)
+    img_max_h   = char_h * (@w_d.maxy - 2)
+    `echo "6;#{img_x};#{img_y};#{img_max_w+2};#{img_max_h+2};\n4;\n3;" | #{@w3mimgdisplay} 2>/dev/null`
+  rescue
+    w_b("Error clearing image")
+  end
+end
+
+# BOTTOM WINDOW FUNCTIONS 
+def w_b(info) # SHOW INFO IN @W_B
+  @w_b.clr
+  info      = "Choose window: i=IMDB list (+/- to add/remove from My list), g=Genres (+/- to add/remove), m=My list. " if info == nil
+  info      = info[1..(@w_b.maxx - 3)] + "…" if info.length + 3 > @w_b.maxx 
+  info     += " " * (@w_b.maxx - info.length) if info.length < @w_b.maxx
+  @w_b.text = info
+  @w_b.write
+  @w_b.update = false
+end
+def w_b_getstr(pretext, text) # A SIMPLE READLINE-LIKE ROUTINE
+  Curses.curs_set(1)
+  Curses.echo
+  stk = 0
+  pos = text.length
+  chr = ""
+  while chr != "ENTER"
+    @w_b.setpos(0,0)
+    @w_b.text = pretext + text
+    @w_b.text += " " * (@w_b.maxx - text.length) if text.length < @w_b.maxx
+    @w_b.write
+    @w_b.setpos(0,pretext.length + pos)
+    @w_b.refresh
+    chr = getchr
+    case chr
+    when 'C-C', 'C-G'
+      return ""
+    when 'RIGHT'
+      pos += 1 unless pos > text.length
+    when 'LEFT'
+      pos -= 1 unless pos == 0
+    when 'HOME'
+      pos = 0
+    when 'END'
+      pos = text.length
+    when 'DEL'
+      text[pos] = ""
+    when 'BACK'
+      unless pos == 0
+        pos -= 1
+        text[pos] = ""
+      end
+    when 'LDEL'
+      text = ""
+      pos = 0
+    when /^.$/
+      text.insert(pos,chr)
+      pos += 1
+    end
+  end
+  Curses.curs_set(0)
+  Curses.noecho
+  return text
+end
+
+# BEFORE WE START
+begin
+  if File.exist?(Dir.home+'/.imdb.conf')
+    load(Dir.home+'/.imdb.conf')
+  else
+    firstrun
+  end
+  if File.exist?(Dir.home+'/.imdb')
+    load(Dir.home+'/.imdb')
+  else
+    puts "Loading IMDB data... (this may take som time, go get some coffee)"
+    loadimdb
+    saveimdb
+  end
+  ## Curses setup 
+  Curses.init_screen
+  Curses.start_color
+  Curses.curs_set(0)
+  Curses.noecho
+  Curses.cbreak
+  Curses.stdscr.keypad = true
+end
+
+# MAIN PROGRAM 
+loop do # OUTER LOOP - (catching refreshes via 'r')
+  @break = false # Initialize @break variable (set if user hits 'r')
+  begin # Create the windows/panels 
+    Curses.stdscr.bg = 234 # Use for borders
+    Curses.stdscr.fill
+    maxx = Curses.cols
+    maxy = Curses.lines
+    # Curses::Window.new(       h,        w,        y,        x   )
+    @w_t = Curses::Window.new( 1,        maxx,     0,           0 )
+    @w_i = Curses::Window.new( maxy-2,   40,       1,           0 )
+    @w_g = Curses::Window.new( maxy-2,   20,       1,          41 )
+    @w_m = Curses::Window.new( maxy/2-1, 40,       1,          62 )
+    @w_n = Curses::Window.new( maxy/2-1, 40,       maxy/2+1,   62 )
+    @w_d = Curses::Window.new( maxy/2-1, maxx-103, 1,         103 )
+    @w_p = Curses::Window.new( maxy/2-1, maxx-103, maxy/2+1,  103 )
+    @w_b = Curses::Window.new( 1,        maxx,     maxy-1,      0 )
+    @w_i.fg, @w_i.bg = Wifg, WIbg
+    @w_g.fg, @w_g.bg = Wgfg, WIbg
+    @w_m.fg, @w_m.bg = Wmfg, WIbg
+    @w_n.fg, @w_n.bg = Wnfg, WIbg
+    @w_d.fg, @w_d.bg = Wdfg, WIbg
+    @w_p.fg, @w_p.bg = Wpfg, WIbg
+    @w_b.fg, @w_b.bg = Wbfg, Wbbg
+    [@w_i, @w_g, @w_m, @w_n].each{|w| w.index = 0}
+    @w_b.fill
+    @w_g.list   = @genres
+    @w_b.update = true
+    @w_d.update = true
+    @active     = @w_i
+    loop do # INNER, CORE LOOP 
+      if @movies
+        imdbmovies
+        @w_t.fg   = WtMfg
+        @search == '' ? @w_t.bg = WtMbg : @w_t.bg = WtMbgS
+        @w_t.attr = Curses::A_BOLD
+      else 
+        imdbseries
+        @w_t.fg   = WtSfg
+        @search == '' ? @w_t.bg = WtSbg : @w_t.bg = WtSbgS
+        @w_t.attr = Curses::A_BOLD
+      end
+      @w_t.fill; @w_i.fill; @w_g.fill; @w_m.fill; @w_n.fill; @w_p.fill
+      w_t; w_list(@w_i); w_list(@w_g); w_list(@w_m); w_list(@w_n)
+      if @w_d.update
+        @w_d.fill
+        w_d
+      end
+      imageclear if @w_d.update
+      @w_d.update = true
+      w_b(nil) if @w_b.update
+      @w_b.update = true
+      getkey              # Get key from user
+      break if @break     # Break to outer loop, redrawing windows, if user hit 'r'
+      break if Curses.cols != maxx or Curses.lines != maxy # break on terminal resize 
+    end
+  ensure # On exit: clear image, close curses 
+    image_show("clear")
+    close_screen
+  end
+end
+
+# vim: set sw=2 sts=2 et fdm=syntax fdn=2 fcs=fold\:\ :
