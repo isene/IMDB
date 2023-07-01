@@ -1,37 +1,37 @@
 
-![Ruby](https://img.shields.io/badge/language-Ruby-red) [![Gem Version](https://badge.fury.io/rb/imdb-term.svg)](https://badge.fury.io/rb/imdb-term) ![Unlicense](https://img.shields.io/badge/license-Unlicense-green) ![Stay Amazing](https://img.shields.io/badge/Stay-Amazing-important)
+![Ruby](https://img.shields.io/badge/language-Ruby-red) [![Gem Version](https://badge.fury.io/rb/imdb-terminal.svg)](https://badge.fury.io/rb/imdb-terminal) ![Unlicense](https://img.shields.io/badge/license-Unlicense-green) ![Stay Amazing](https://img.shields.io/badge/Stay-Amazing-important)
 
-# IMDB-term
+# IMDB for the terminal
 
 Finding the right moviie to watch or series to binge can be time consuming. My
 girlfriend asked if I could create an application that would cut down the time
 spent on searching in favor of time spent watching and cuddling. Meet
-IMDB-term.
+IMDB for the terminal.
 
 Narrow down your preferences from a 1000 movies and almost 500 series. Select
 a minimum IMDB rating, range of production years, genres you like and dislike
-to get your preferred list.  Get detailed information on movies and series and
+to get your preferred list. Get detailed information on movies and series and
 where you can stream them. Even the movie poster in the terminal.
 
-IMDB-term uses three APIs - one to scrape IMDB for the top 1000 lists, one to
-give you details on the movies and series and one to show you where you can
-stream it. When you first run the application, it will guide you through the
-process of registering free accounts and get the three API keys needed. I
-would be happy to keys in the application, but there is a limit to the number
-of calls each day, so you need your own keys. The key to scrape the IMDB top
-1000 is via `page2api`. You will get a certain amounts of credits for free
-when you sign up, and it will last you a very long time since the program
+IMDB for the terminal uses three APIs - one to scrape IMDB for the top 1000
+lists, one to give you details on the movies and series and one to show you
+where you can stream it. When you first run the application, it will guide you
+through the process of registering free accounts and get the three API keys
+needed. I would be happy to keys in the application, but there is a limit to
+the number of calls each day, so you need your own keys. The key to scrape the
+IMDB top 1000 is via `page2api`. You will get a certain amounts of credits for
+free when you sign up, and it will last you a very long time since the program
 caches the movies and series lists. You could probably do well with refreshing
 the lists once per month or so (using the key `I`).
 
 As for the application itself, it's a terminal curses program that is best
-installed with `gem install imdb-term` and run the program `imdb`in the
+installed with `gem install imdb-terminal` and run the program `imdb`in the
 terminal. Or you can clone this repo and run the single file `imdb`. As usual,
 I try to keep the requirements to a minimum and the program to a single file.
 
 # Screenshot
 The screenshot gives you an overview of the layout of the panes:
-![IMDB-term screenshot](img/screenshot.png)
+![IMDB-terminal screenshot](img/screenshot.png)
 
 # Keymap
 
