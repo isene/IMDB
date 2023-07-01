@@ -36,11 +36,11 @@ The screenshot gives you an overview of the layout of the panes:
 # Keymap
 
 Keys       | Function
------------+--------------------
+-----------|--------------------
 TAB        | Cycle the panes (active pane is gray)
 Shift-TAB  | Cycle backward
 Arrow keys | UP, DOWN, PgUP, PgDOWN, HOME, END in lists
-+ or -     | Depends on pane (intuitive)
+\+ or -     | Depends on pane (intuitive)
 I          | Load fresh IMDB data (be patient)
 m or s     | Show MOVIES or SERIES
 r          | Select MINimum IMDB rating (in bottom line)
