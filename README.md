@@ -2,7 +2,6 @@
 ![Ruby](https://img.shields.io/badge/language-Ruby-red) [![Gem Version](https://badge.fury.io/rb/imdb-terminal.svg)](https://badge.fury.io/rb/imdb-terminal) ![Unlicense](https://img.shields.io/badge/license-Unlicense-green) ![Stay Amazing](https://img.shields.io/badge/Stay-Amazing-important)
 
 # IMDB for the terminal
-
 Finding the right moviie to watch or series to binge can be time consuming. My
 girlfriend asked if I could create an application that would cut down the time
 spent on searching in favor of time spent watching and cuddling. Meet
@@ -34,24 +33,23 @@ The screenshot gives you an overview of the layout of the panes:
 ![IMDB-terminal screenshot](img/screenshot.png)
 
 # Keymap
-
-Keys       | Function
------------|--------------------
-TAB        | Cycle the panes (active pane is gray)
-Shift-TAB  | Cycle backward
-Arrow keys | UP, DOWN, PgUP, PgDOWN, HOME, END in lists
-\+ or -     | Depends on pane (intuitive)
-I          | Load fresh IMDB data (be patient)
-m or s     | Show MOVIES or SERIES
-r          | Select MINimum IMDB rating (in bottom line)
-y or Y     | Select MINimum or MAXimum production year
-/ or \\     | Enter or clear search for movie/series title
-G          | Set genres to match every movie/series
-d          | Get details on selected movie/series
-D          | Show where you can stream the movie/series
-R          | Refresh all panes
-w or W     | Write changes to config or save IMDB data
-q or Q     | Quit w/saving config or w/o saving config
+Keys         | Function
+-------------|--------------------
+TAB or S-TAB | Cycle panes (active is gray) or backwards
+Arrow keys   | UP, DOWN, PgUP, PgDOWN, HOME, END in lists
+\+ or -       | Depends on pane (intuitive)
+I            | Load fresh IMDB data (be patient)
+m or s       | Show MOVIES or SERIES
+r            | Select MINimum IMDB rating (in bottom line)
+y or Y       | Select MINimum or MAXimum production year
+/ or \\       | Enter or clear search for movie/series title
+G            | Set genres to match every movie/series
+d            | Get details on selected movie/series
+D            | Show where you can stream the movie/series
+R            | Refresh all panes
+v            | Show version (and latest RybyGems version)
+w or W       | Write changes to config or save IMDB data
+q or Q       | Quit w/saving config or w/o saving config
 
 # Suggestions and improvements
 If you have any suggestions for improvement or cool features, create an issue

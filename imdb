@@ -14,28 +14,29 @@
 #             for any damages resulting from its use. Further, I am under no
 #             obligation to maintain or extend this software. It is provided 
 #             on an 'as is' basis without any expressed or implied warranty.
+@version = "0.2"
 
 # PRELIMINARIES
 @help = <<HELPTEXT
 IMDB-term (https://github.com/isene/IMDB) Help text:
 
-Keys       | Function
------------+--------------------
-TAB        | Cycle the panes (active pane is gray)
-Shift-TAB  | Cycle backward
-Arrow keys | UP, DOWN, PgUP, PgDOWN, HOME, END in lists
-+ or -     | Depends on pane (intuitive)
-I          | Load fresh IMDB data (be patient)
-m or s     | Show MOVIES or SERIES
-r          | Select MINimum IMDB rating (in bottom line)
-y or Y     | Select MINimum or MAXimum production year
-/ or \\     | Enter or clear search for movie/series title
-G          | Set genres to match every movie/series
-d          | Get details on selected movie/series
-D          | Show where you can stream the movie/series
-R          | Refresh all panes
-w or W     | Write changes to config or save IMDB data
-q or Q     | Quit w/saving config or w/o saving config
+Keys         | Function
+-------------+--------------------
+TAB or S-TAB | Cycle panes (active is gray) or backwards
+Arrow keys   | UP, DOWN, PgUP, PgDOWN, HOME, END in lists
++ or -       | Depends on pane (intuitive)
+I            | Load fresh IMDB data (be patient)
+m or s       | Show MOVIES or SERIES
+r            | Select MINimum IMDB rating (in bottom line)
+y or Y       | Select MINimum or MAXimum production year
+/ or \\       | Enter or clear search for movie/series title
+G            | Set genres to match every movie/series
+d            | Get details on selected movie/series
+D            | Show where you can stream the movie/series
+R            | Refresh all panes
+v            | Show version (and latest RybyGems version)
+w or W       | Write changes to config or save IMDB data
+q or Q       | Quit w/saving config or w/o saving config
 HELPTEXT
 begin # BASIC SETUP
   require 'net/http'
@@ -331,6 +332,8 @@ def getkey # GET KEY FROM USER
       w_b("Error: #{e.inspect}")
     end
     @w_b.update = false
+  when 'v'
+    w_b("Version = #{@version} (latest RubyGems version is #{Gem.latest_version_for("imdb-terminal").version} - https://github.com/isene/IMDB)")
   when 'w'
     saveconf
   when 'W'
@@ -594,7 +597,13 @@ def w_d(ext = 0) # SHOW INFO IN @w_d and @w_p
   # Display the poster
   poster     = det["Poster"]
   `curl -s "#{poster}" > /tmp/imdb.jpg`
-  image      = "/tmp/imdb.jpg"
+  imageshow("/tmp/imdb.jpg")
+  return unless ext > 1 # Skip if no outlets are to be displayed
+  otl.each{|o| outlets += "#{o}  "}
+  @w_d.text += "Outlets:   " + outlets
+  @w_d.write
+end
+def imageshow(image)
   begin
     terminfo    = `xwininfo -id $(xdotool getactivewindow)`
     term_w      = terminfo.match(/Width: (\d+)/)[1].to_i
@@ -603,10 +612,11 @@ def w_d(ext = 0) # SHOW INFO IN @w_d and @w_p
     char_h      = term_h / Curses.lines
     img_x       = char_w * 105
     img_y       = char_h * (Curses.lines / 2 + 2)
-    img_max_w   = char_w * (Curses.cols - width - 2)
+    img_max_w   = char_w * (Curses.cols - (Curses.cols - 104) - 2)
     img_max_h   = char_h * (@w_d.maxy - 2)
     # Clear previous images
     `echo "6;#{img_x};#{img_y};#{img_max_w+2};#{img_max_h+2};\n4;\n3;" | #{@w3mimgdisplay} 2>/dev/null`
+    return if image == ""
     img_w,img_h = `identify -format "%[fx:w]x%[fx:h]" #{image} 2>/dev/null`.split('x')
     img_w       = img_w.to_i
     img_h       = img_h.to_i
@@ -621,26 +631,6 @@ def w_d(ext = 0) # SHOW INFO IN @w_d and @w_p
     `echo "0;1;#{img_x};#{img_y};#{img_w};#{img_h};;;;;\"#{image}\"\n4;\n3;" | #{@w3mimgdisplay} 2>/dev/null`
   rescue
     w_b("Error showing image")
-  end
-  return unless ext > 1 # Skip if no outlets are to be displayed
-  otl.each{|o| outlets += "#{o}  "}
-  @w_d.text += "Outlets:   " + outlets
-  @w_d.write
-end
-def imageclear
-  begin
-    terminfo    = `xwininfo -id $(xdotool getactivewindow)`
-    term_w      = terminfo.match(/Width: (\d+)/)[1].to_i
-    term_h      = terminfo.match(/Height: (\d+)/)[1].to_i
-    char_w      = term_w / Curses.cols
-    char_h      = term_h / Curses.lines
-    img_x       = char_w * 105
-    img_y       = char_h * (Curses.lines / 2 + 2)
-    img_max_w   = char_w * (Curses.cols - (Curses.cols - 104) - 2)
-    img_max_h   = char_h * (@w_d.maxy - 2)
-    `echo "6;#{img_x};#{img_y};#{img_max_w+2};#{img_max_h+2};\n4;\n3;" | #{@w3mimgdisplay} 2>/dev/null`
-  rescue
-    w_b("Error clearing image")
   end
 end
 
@@ -770,7 +760,7 @@ loop do # OUTER LOOP - (catching refreshes via 'r')
         @w_d.fill
         w_d
       end
-      imageclear if @w_d.update
+      imageshow("") if @w_d.update
       @w_d.update = true
       w_b(nil) if @w_b.update
       @w_b.update = true
@@ -779,7 +769,7 @@ loop do # OUTER LOOP - (catching refreshes via 'r')
       break if Curses.cols != maxx or Curses.lines != maxy # break on terminal resize 
     end
   ensure # On exit: clear image, close curses 
-    image_show("clear")
+    imageshow("")
     close_screen
   end
 end
