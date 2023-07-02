@@ -14,7 +14,7 @@
 #             for any damages resulting from its use. Further, I am under no
 #             obligation to maintain or extend this software. It is provided 
 #             on an 'as is' basis without any expressed or implied warranty.
-@version = "0.2"
+@version = "0.3"
 
 # PRELIMINARIES
 @help = <<HELPTEXT
@@ -513,7 +513,7 @@ def w_list(win) # LIST IN WINDOW
   win.fill
   ix = 0
   ix = win.index - win.maxy/2 if win.index > win.maxy/2 and win.list.size > win.maxy - 1
-  while ix < win.list.size and ix < win.maxy do
+  while ix < win.list.size
     str  = win.list[ix][0]
     str  = win.list[ix] if win == @w_g
     if ix == win.index and win == @active
