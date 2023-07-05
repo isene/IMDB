@@ -117,40 +117,87 @@ end
 
 # CLASSES
 class Curses::Window # CLASS EXTENSION 
-  attr_accessor :fg, :bg, :attr, :text, :index, :list, :update
   # General extensions (see https://github.com/isene/Ruby-Curses-Class-Extension)
-  def clr
+  # This is a class extension to Ruby Curses - a class in dire need of such.
+  # self.pair keeps a registry of colors as they are encountered - defined with: 
+  # init_pair(index, foreground, background)
+  # self.fg is set for the foreground color
+  # self.bg is set for the background color
+  # self.attr is set for text attributes like Curses::A_BOLD
+  # self.update can be used to indicate if a window should be updated (true/false)
+  # self.index can be used to keep track of the current list item in a window
+  attr_accessor :fg, :bg, :attr, :text, :update, :index, :list
+  def self.pair(fg, bg)
+    @p = [[]] if @p == nil
+    fg = fg.to_i; bg = bg.to_i
+    if @p.include?([fg,bg])
+      @p.index([fg,bg])
+    else
+      @p.push([fg,bg])
+      cp = @p.index([fg,bg])
+      init_pair(cp, fg, bg)
+      @p.index([fg,bg])
+    end
+  end
+  def clr # Clears the whole window
     self.setpos(0, 0)
     self.maxy.times {self.deleteln()}
     self.refresh
     self.setpos(0, 0)
   end
-  def fill # Fill window with color as set by :bg
+  def fill # Fill window with color as set by self.color (or self.bg if not set) 
+    self.setpos(0, 0)
+    self.fill_from_cur_pos
+  end
+  def fill_to_cur_pos # Fills the window up to current line
+    x = self.curx
+    y = self.cury
     self.setpos(0, 0)
     self.bg = 0 if self.bg   == nil
     self.fg = 255 if self.fg == nil
-    xor = self.fg ^ self.bg
-    init_pair(xor, self.fg, self.bg)
     blank = " " * self.maxx
-    self.maxy.times {self.attron(color_pair(xor)) {self << blank}}
+    cp = Curses::Window.pair(self.fg, self.bg)
+    y.times {self.attron(color_pair(cp)) {self << blank}}
     self.refresh
-    self.setpos(0, 0)
+    self.setpos(y, x)
   end
-  def write # Write context of :text to window with attributes :attr
-    self.bg   = 0 if self.bg   == nil
-    self.fg   = 255 if self.fg == nil
-    xor = self.fg ^ self.bg
-    init_pair(xor, self.fg, self.bg)
+  def fill_from_cur_pos # Fills the rest of the window from current line
+    x = self.curx
+    y = self.cury
+    self.setpos(y, 0)
+    self.bg = 0 if self.bg   == nil
+    self.fg = 255 if self.fg == nil
+    blank = " " * self.maxx
+    cp = Curses::Window.pair(self.fg, self.bg)
+    self.maxy.times {self.attron(color_pair(cp)) {self << blank}}
+    self.refresh
+    self.setpos(y, x)
+  end
+  def write
     self.attr = 0 if self.attr == nil
-    self.attron(color_pair(xor) | self.attr) { self << self.text }
-    self.refresh
-    self.text = ""
-  end
-  def p(fg, bg, attr, text)
-    init_pair(fg ^ bg, fg, bg)
-    self.attron(color_pair(fg ^ bg) | attr) { self << text }
+    self.bg = 0 if self.bg   == nil
+    self.fg = 255 if self.fg == nil
+    cp = Curses::Window.pair(self.fg, self.bg)
+    self.attron(color_pair(cp) | self.attr) { self << self.text }
     self.refresh
   end
+  def p(text) # Puts text to window
+    self.attr = 0 if self.attr == nil
+    self.bg = 0 if self.bg   == nil
+    self.fg = 255 if self.fg == nil
+    cp = Curses::Window.pair(self.fg, self.bg)
+    self.attron(color_pair(cp) | attr) { self << text }
+    self.refresh
+  end
+  def pa(fg = self.fg, bg = self.bg, attr = self.attr, text) # Puts text to window with full set of attributes
+    cp = Curses::Window.pair(fg, bg)
+    self.attron(color_pair(cp) | attr) { self << text }
+    self.refresh
+  end
+  def format_text(text) # Format text so that it linebreaks neatly inside window
+    return "\n" + text.gsub(/(.{1,#{self.maxx}})( +|$\n?)|(.{1,#{self.maxx}})/, "\\1\\3\n")
+  end
+  alias :puts :p
 end
 
 # GENERIC FUNCTIONS 
@@ -504,8 +551,10 @@ end
 
 # BASIC WINDOW FUNCTIONS 
 def w_t # SHOW INFO IN @w_t
+  @w_t.clr
   @movies ? @w_t.text  = " MOVIES ::  " : @w_t.text  = " SERIES ::  "
   @w_t.text += "Rating MIN: #{@rating} - Year MIN: #{@yearMin} - Year MAX: #{@yearMax} :: Selection = #{@imdbsel.size}"
+  @w_t.text += " " * (@w_t.maxx - @w_t.text.length) if @w_t.text.length < @w_t.maxx
   @w_t.write
 end
 def w_list(win) # LIST IN WINDOW
@@ -716,10 +765,11 @@ end
 loop do # OUTER LOOP - (catching refreshes via 'r')
   @break = false # Initialize @break variable (set if user hits 'r')
   begin # Create the windows/panels 
-    Curses.stdscr.bg = 234 # Use for borders
-    Curses.stdscr.fill
     maxx = Curses.cols
     maxy = Curses.lines
+    init_pair(255, 0, 234)
+    maxy.times {Curses.stdscr.attron(color_pair(255)) {Curses.stdscr << " " * maxx}}
+    Curses.stdscr.refresh
     # Curses::Window.new(       h,        w,        y,        x   )
     @w_t = Curses::Window.new( 1,        maxx,     0,           0 )
     @w_i = Curses::Window.new( maxy-2,   40,       1,           0 )
@@ -737,7 +787,6 @@ loop do # OUTER LOOP - (catching refreshes via 'r')
     @w_p.fg, @w_p.bg = Wpfg, WIbg
     @w_b.fg, @w_b.bg = Wbfg, Wbbg
     [@w_i, @w_g, @w_m, @w_n].each{|w| w.index = 0}
-    @w_b.fill
     @w_g.list   = @genres
     @w_b.update = true
     @w_d.update = true
@@ -754,7 +803,7 @@ loop do # OUTER LOOP - (catching refreshes via 'r')
         @search == '' ? @w_t.bg = WtSbg : @w_t.bg = WtSbgS
         @w_t.attr = Curses::A_BOLD
       end
-      @w_t.fill; @w_i.fill; @w_g.fill; @w_m.fill; @w_n.fill; @w_p.fill
+      @w_i.fill; @w_g.fill; @w_m.fill; @w_n.fill; @w_p.fill
       w_t; w_list(@w_i); w_list(@w_g); w_list(@w_m); w_list(@w_n)
       if @w_d.update
         @w_d.fill
