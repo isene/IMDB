@@ -621,11 +621,12 @@ def w_d(ext = 0) # SHOW INFO IN @w_d and @w_p
   list = @active.list
   return if list.empty? # Skip if list is empty
   id  = list[@active.index][4] 
+  @w_d.clr
   @w_d.text  = "#{list[@active.index][0]}\n\n"
   @w_d.attr  = Curses::A_BOLD
   @w_d.write
   @w_d.attr  = 0
-  @w_d.text += "Rating:    " + list[@active.index][1].to_s.ljust(14) + "Genres:  #{list[@active.index][3]}\n"
+  @w_d.text  = "Rating:    " + list[@active.index][1].to_s.ljust(14) + "Genres:  #{list[@active.index][3]}\n"
   @w_d.write
   return unless ext > 0 # Skip if no details are to be displayed
   det = getomdb(id)
@@ -649,7 +650,7 @@ def w_d(ext = 0) # SHOW INFO IN @w_d and @w_p
   imageshow("/tmp/imdb.jpg")
   return unless ext > 1 # Skip if no outlets are to be displayed
   otl.each{|o| outlets += "#{o}  "}
-  @w_d.text += "Outlets:   " + outlets
+  @w_d.text  = "Outlets:   " + outlets
   @w_d.write
 end
 def imageshow(image)
