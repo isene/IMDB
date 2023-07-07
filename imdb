@@ -14,7 +14,7 @@
 #             for any damages resulting from its use. Further, I am under no
 #             obligation to maintain or extend this software. It is provided 
 #             on an 'as is' basis without any expressed or implied warranty.
-@version = "0.7"
+@version = "0.7.1"
 
 # PRELIMINARIES
 @help = <<HELPTEXT
@@ -358,8 +358,8 @@ def getkey # GET KEY FROM USER
   when '@' # Enter "Ruby debug"
     cmd = w_b_getstr("◆ ", "")
     begin
-      @w_b.fill
-      @w_b.p(eval(cmd))
+      @w_d.fill
+      @w_d.p(eval(cmd))
     rescue StandardError => e
       w_b("Error: #{e.inspect}")
     end
