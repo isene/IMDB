@@ -14,7 +14,7 @@
 #             for any damages resulting from its use. Further, I am under no
 #             obligation to maintain or extend this software. It is provided 
 #             on an 'as is' basis without any expressed or implied warranty.
-@version = "0.3"
+@version = "0.7"
 
 # PRELIMINARIES
 @help = <<HELPTEXT
@@ -173,29 +173,16 @@ class Curses::Window # CLASS EXTENSION
     self.refresh
     self.setpos(y, x)
   end
-  def write
-    self.attr = 0 if self.attr == nil
-    self.bg = 0 if self.bg   == nil
-    self.fg = 255 if self.fg == nil
-    cp = Curses::Window.pair(self.fg, self.bg)
-    self.attron(color_pair(cp) | self.attr) { self << self.text }
-    self.refresh
-  end
-  def p(text) # Puts text to window
-    self.attr = 0 if self.attr == nil
-    self.bg = 0 if self.bg   == nil
-    self.fg = 255 if self.fg == nil
-    cp = Curses::Window.pair(self.fg, self.bg)
-    self.attron(color_pair(cp) | attr) { self << text }
-    self.refresh
-  end
-  def pa(fg = self.fg, bg = self.bg, attr = self.attr, text) # Puts text to window with full set of attributes
+  def p(fg = self.fg, bg = self.bg, attr = self.attr, text) # Puts text to window with full set of attributes
+    fg = 255 if self.fg == nil
+    bg = 0 if self.bg   == nil
+    attr = 0 if self.attr == nil
     cp = Curses::Window.pair(fg, bg)
     self.attron(color_pair(cp) | attr) { self << text }
     self.refresh
   end
-  def format_text(text) # Format text so that it linebreaks neatly inside window
-    return "\n" + text.gsub(/(.{1,#{self.maxx}})( +|$\n?)|(.{1,#{self.maxx}})/, "\\1\\3\n")
+  def format(text) # Format text so that it linebreaks neatly inside window
+    return "\n" + text.gsub(/(.{1,#{self.maxx-1}})( +|$\n?)|(.{1,#{self.maxx-1}})/, "\\1\\3\n")
   end
   alias :puts :p
 end
@@ -265,8 +252,7 @@ def getkey # GET KEY FROM USER
   case chr
   when '?' # Show helptext in right window 
     @w_d.fill
-    @w_d.text = @help
-    @w_d.write
+    @w_d.p(@help)
     @w_d.update = false
   when 'UP'
     @active.index = @active.index <= 0 ? @active.list.size - 1 : @active.index - 1
@@ -277,7 +263,7 @@ def getkey # GET KEY FROM USER
     @active.index = 0 if @active.index < 0
   when 'PgDOWN'
     @active.index += @active.maxy - 2
-    @active.index = @active.list.size - 1 if @active.index > @active.list.size
+    @active.index = @active.list.size - 1 if @active.index > @active.list.size - 1
   when 'HOME'
     @active.index = 0
   when 'END'
@@ -372,9 +358,8 @@ def getkey # GET KEY FROM USER
   when '@' # Enter "Ruby debug"
     cmd = w_b_getstr("◆ ", "")
     begin
-      @w_b.text = eval(cmd)
       @w_b.fill
-      @w_b.write
+      @w_b.p(eval(cmd))
     rescue StandardError => e
       w_b("Error: #{e.inspect}")
     end
@@ -454,7 +439,7 @@ def imdbmovies
     arr.sort_by! {|m| m[0]}
   end
   @w_i.list  = @imdbsel
-  @w_i.index = 0 if @w_i.index > @w_i.list.size - 2
+  @w_i.index = 0 if @w_i.index > @w_i.list.size - 1
   @w_m.list  = @myMYsel
   @w_n.list  = @myMN
   @myN       = @myMN
@@ -505,7 +490,7 @@ def getstreaming(id) # Returns array of outlets
     res["result"]["streamingInfo"][@country].each{|k,v| outlets.push(k)}
     return outlets
   rescue
-    return ["No outlet info"]
+    return [outlets.to_s]
   end
 end
 def saveconf
@@ -552,68 +537,54 @@ end
 # BASIC WINDOW FUNCTIONS 
 def w_t # SHOW INFO IN @w_t
   @w_t.clr
-  @movies ? @w_t.text  = " MOVIES ::  " : @w_t.text  = " SERIES ::  "
-  @w_t.text += "Rating MIN: #{@rating} - Year MIN: #{@yearMin} - Year MAX: #{@yearMax} :: Selection = #{@imdbsel.size}"
-  @w_t.text += " " * (@w_t.maxx - @w_t.text.length) if @w_t.text.length < @w_t.maxx
-  @w_t.write
+  @movies ? text  = " MOVIES ::  " : text  = " SERIES ::  "
+  text += "Rating MIN: #{@rating} - Year MIN: #{@yearMin} - Year MAX: #{@yearMax} :: Selection = #{@imdbsel.size}"
+  text += " " * (@w_t.maxx - text.length) if text.length < @w_t.maxx
+  @w_t.p(text)
 end
 def w_list(win) # LIST IN WINDOW
+  win.attr = 0
   win == @active ? win.bg = WAbg : win.bg = WIbg
   win.fill
-  ix = 0
+  ix = 0; t = 0
   ix = win.index - win.maxy/2 if win.index > win.maxy/2 and win.list.size > win.maxy - 1
-  while ix < win.list.size
+  while ix < win.list.size and t < win.maxy do
     str  = win.list[ix][0]
     str  = win.list[ix] if win == @w_g
     if ix == win.index and win == @active
-      win.text = "→ "
-      win.write
+      win.p("→ ")
     else
-      win.attr = 0
-      win.text = "  "
-      win.write
+      win.p("  ")
     end
     if win == @w_g
       if @genY.include?(str)
-        win.text = "+"
         win.fg   = WgYfg
         win.attr = Curses::A_BOLD
-        win.write
+        win.p("+")
       elsif @genN.include?(str)
-        win.text = "-"
         win.fg   = WgNfg
-        win.write
+        win.p("-")
       else
-        win.text = " "
-        win.write
         win.fg   = Wgfg
+        win.p(" ")
       end
     end
     win.attr = win.attr | Curses::A_UNDERLINE if ix == win.index
     str      = str[0..(win.maxx - 6)] + "…" if str.length > win.maxx - 4
-    win.text = str
-    win.write
+    win.p(str)
     win.attr = 0
-    win.text = " " * (win.maxx - str.length - 2)
-    win.text = win.text[0..-2] if win == @w_g
-    win.write
-    ix += 1
+    fill = " " * (win.maxx - str.length - 2)
+    fill = fill[0..-2] if win == @w_g
+    win.p(fill)
+    ix += 1; t += 1
   end
   if win.index > win.maxy/2
     win.setpos(0, win.maxx - 1)
-    win.text = "∆"
-    fg0      = win.fg
-    win.fg   = Mark
-    win.write
-    win.fg   = fg0
+    win.p(Mark,"∆")
   end
   if win.list.length > win.maxy - 1 and win.list.length > win.index + win.maxy/2 - 1
     win.setpos(win.maxy - 1, win.maxx - 1)
-    win.text = "∇"
-    fg0      = win.fg
-    win.fg   = Mark
-    win.write
-    win.fg   = fg0
+    win.p(Mark,"∇")
   end
 end
 def w_d(ext = 0) # SHOW INFO IN @w_d and @w_p
@@ -622,36 +593,37 @@ def w_d(ext = 0) # SHOW INFO IN @w_d and @w_p
   return if list.empty? # Skip if list is empty
   id  = list[@active.index][4] 
   @w_d.clr
-  @w_d.text  = "#{list[@active.index][0]}\n\n"
   @w_d.attr  = Curses::A_BOLD
-  @w_d.write
+  @w_d.p("#{list[@active.index][0]}\n\n")
   @w_d.attr  = 0
-  @w_d.text  = "Rating:    " + list[@active.index][1].to_s.ljust(14) + "Genres:  #{list[@active.index][3]}\n"
-  @w_d.write
+  @w_d.p(153,232,Curses::A_BOLD,"Rating:    " + list[@active.index][1].to_s.ljust(14) + "Genres:  #{list[@active.index][3]}\n")
   return unless ext > 0 # Skip if no details are to be displayed
   det = getomdb(id)
-  otl = getstreaming(id)
-  @w_d.text  = "Rated:     " + det["Rated"].ljust(14)                + "Runtime: #{det["Runtime"]}"
-  @w_d.text += " (#{det["totalSeasons"]})" unless det["totalSeasons"] == nil
-  @w_d.text += "\n"
-  @w_d.text += "Released:  " + det["Released"].ljust(14) + "(#{id})\n\n"
-  width      = Curses.cols - 104
-  @w_d.text += det["Plot"].gsub!(/(.{1,#{width}})( +|$\n?)|(.{1,#{width}})/, "\\1\\3\n")
-  @w_d.text += "\n"
-  @w_d.text += "Awards:    " + det["Awards"]    + "\n"
-  @w_d.text += "Director:  " + det["Director"]  + "\n"
-  @w_d.text += "Actors:    " + det["Actors"]    + "\n\n"
-  @w_d.text += "Metascore: " + det["Metascore"] + "\n\n"
-  outlets    = ""
-  @w_d.write
+  text  = "\nRated:     " + det["Rated"].ljust(14)                + "Runtime: #{det["Runtime"]}"
+  text += " (#{det["totalSeasons"]})" unless det["totalSeasons"] == nil
+  text += "\n"
+  text += "Released:  " + det["Released"].ljust(14)
+  @w_d.p(230,text)
+  @w_d.p(244,"(#{id})\n")
+  width = Curses.cols - 104
+  @w_d.p(228,@w_d.format(det["Plot"]))
+  text  = "\n"
+  text += "Awards:    " + det["Awards"]    + "\n"
+  text += "Director:  " + det["Director"]  + "\n"
+  text += "Actors:    " + det["Actors"]    + "\n\n"
+  @w_d.p(223,text)
+  text  = "Metascore: " + det["Metascore"] + "\n\n"
+  @w_d.p(230,text)
   # Display the poster
   poster     = det["Poster"]
   `curl -s "#{poster}" > /tmp/imdb.jpg`
   imageshow("/tmp/imdb.jpg")
   return unless ext > 1 # Skip if no outlets are to be displayed
+  outlets    = ""
+  otl = getstreaming(id)
   otl.each{|o| outlets += "#{o}  "}
-  @w_d.text  = "Outlets:   " + outlets
-  @w_d.write
+  text  = "Outlets:   " + outlets
+  @w_d.p(112,text)
 end
 def imageshow(image)
   begin
@@ -690,8 +662,7 @@ def w_b(info) # SHOW INFO IN @W_B
   info      = "Choose window: i=IMDB list (+/- to add/remove from My list), g=Genres (+/- to add/remove), m=My list. " if info == nil
   info      = info[1..(@w_b.maxx - 3)] + "…" if info.length + 3 > @w_b.maxx 
   info     += " " * (@w_b.maxx - info.length) if info.length < @w_b.maxx
-  @w_b.text = info
-  @w_b.write
+  @w_b.p(info)
   @w_b.update = false
 end
 def w_b_getstr(pretext, text) # A SIMPLE READLINE-LIKE ROUTINE
@@ -702,9 +673,9 @@ def w_b_getstr(pretext, text) # A SIMPLE READLINE-LIKE ROUTINE
   chr = ""
   while chr != "ENTER"
     @w_b.setpos(0,0)
-    @w_b.text = pretext + text
-    @w_b.text += " " * (@w_b.maxx - text.length) if text.length < @w_b.maxx
-    @w_b.write
+    text  = pretext + text
+    text += " " * (@w_b.maxx - text.length) if text.length < @w_b.maxx
+    @w_b.p(text)
     @w_b.setpos(0,pretext.length + pos)
     @w_b.refresh
     chr = getchr
