@@ -14,7 +14,7 @@
 #             for any damages resulting from its use. Further, I am under no
 #             obligation to maintain or extend this software. It is provided 
 #             on an 'as is' basis without any expressed or implied warranty.
-@version = "0.7.1"
+@version = "0.7.2"
 
 # PRELIMINARIES
 @help = <<HELPTEXT
@@ -174,12 +174,17 @@ class Curses::Window # CLASS EXTENSION
     self.setpos(y, x)
   end
   def p(fg = self.fg, bg = self.bg, attr = self.attr, text) # Puts text to window with full set of attributes
-    fg = 255 if self.fg == nil
-    bg = 0 if self.bg   == nil
-    attr = 0 if self.attr == nil
-    cp = Curses::Window.pair(fg, bg)
+    fg   = 255 if fg   == nil
+    bg   = 0   if bg   == nil
+    attr = 0   if attr == nil
+    cp   = Curses::Window.pair(fg, bg)
     self.attron(color_pair(cp) | attr) { self << text }
     self.refresh
+  end
+  def nl(bg = self.bg)
+    bg = 232 if bg == nil
+    f  = " " * (self.maxx - self.curx)
+    self.p(self.fg, bg, self.attr, f)
   end
   def format(text) # Format text so that it linebreaks neatly inside window
     return "\n" + text.gsub(/(.{1,#{self.maxx-1}})( +|$\n?)|(.{1,#{self.maxx-1}})/, "\\1\\3\n")
@@ -539,8 +544,8 @@ def w_t # SHOW INFO IN @w_t
   @w_t.clr
   @movies ? text  = " MOVIES ::  " : text  = " SERIES ::  "
   text += "Rating MIN: #{@rating} - Year MIN: #{@yearMin} - Year MAX: #{@yearMax} :: Selection = #{@imdbsel.size}"
-  text += " " * (@w_t.maxx - text.length) if text.length < @w_t.maxx
   @w_t.p(text)
+  @w_t.nl
 end
 def w_list(win) # LIST IN WINDOW
   win.attr = 0
@@ -573,9 +578,7 @@ def w_list(win) # LIST IN WINDOW
     str      = str[0..(win.maxx - 6)] + "…" if str.length > win.maxx - 4
     win.p(str)
     win.attr = 0
-    fill = " " * (win.maxx - str.length - 2)
-    fill = fill[0..-2] if win == @w_g
-    win.p(fill)
+    win.nl
     ix += 1; t += 1
   end
   if win.index > win.maxy/2
