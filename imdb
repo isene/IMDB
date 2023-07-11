@@ -14,7 +14,7 @@
 #             for any damages resulting from its use. Further, I am under no
 #             obligation to maintain or extend this software. It is provided 
 #             on an 'as is' basis without any expressed or implied warranty.
-@version = "0.7.2"
+@version = "0.7.3"
 
 # PRELIMINARIES
 @help = <<HELPTEXT
@@ -676,9 +676,8 @@ def w_b_getstr(pretext, text) # A SIMPLE READLINE-LIKE ROUTINE
   chr = ""
   while chr != "ENTER"
     @w_b.setpos(0,0)
-    text  = pretext + text
-    text += " " * (@w_b.maxx - text.length) if text.length < @w_b.maxx
-    @w_b.p(text)
+    @w_b.p(pretext + text)
+    @w_b.nl
     @w_b.setpos(0,pretext.length + pos)
     @w_b.refresh
     chr = getchr
