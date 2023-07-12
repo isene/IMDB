@@ -14,7 +14,7 @@
 #             for any damages resulting from its use. Further, I am under no
 #             obligation to maintain or extend this software. It is provided 
 #             on an 'as is' basis without any expressed or implied warranty.
-@version = "0.7.3"
+@version = "0.7.4"
 
 # PRELIMINARIES
 @help = <<HELPTEXT
@@ -662,7 +662,7 @@ end
 # BOTTOM WINDOW FUNCTIONS 
 def w_b(info) # SHOW INFO IN @W_B
   @w_b.clr
-  info      = "Choose window: i=IMDB list (+/- to add/remove from My list), g=Genres (+/- to add/remove), m=My list. " if info == nil
+  info      = "Use TAB to cycle through windows. Press ? for help. " if info == nil
   info      = info[1..(@w_b.maxx - 3)] + "…" if info.length + 3 > @w_b.maxx 
   info     += " " * (@w_b.maxx - info.length) if info.length < @w_b.maxx
   @w_b.p(info)
