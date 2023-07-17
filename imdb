@@ -722,7 +722,7 @@ begin
   if File.exist?(Dir.home+'/.imdb')
     load(Dir.home+'/.imdb')
   else
-    puts "Loading IMDB data... (this may take som time, go get some coffee)"
+    puts "Loading IMDB data... (this may take some time, go get some coffee)"
     loadimdb
     saveimdb
   end
