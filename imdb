@@ -75,8 +75,8 @@ begin # BASIC SETUP
   @mySY       = []
   @mySN       = []
   ## These are IMDB specific
-  @urlmovies  = "https://www.imdb.com/search/title/?groups=top_1000&start=[1, 1001, 50]"
-  @urlseries  = "https://www.imdb.com/search/title/?title_type=tv_series&start=[1, 1001, 50]"
+  @urlmovies  = "https://www.imdb.com/search/title/?groups=top_1000&start=[1, 951, 50]"
+  @urlseries  = "https://www.imdb.com/search/title/?title_type=tv_series&start=[1, 951, 50]"
   @country    = "no"
   @lang       = "en"
   @genres     = ["Action", "Adult", "Adventure", "Animation", "Biography", "Comedy", "Crime", "Documentary", "Drama",
@@ -722,7 +722,7 @@ begin
   if File.exist?(Dir.home+'/.imdb')
     load(Dir.home+'/.imdb')
   else
-    puts "Loading IMDB data... (this may take som time, go get some coffee)"
+    puts "Loading IMDB data... (this may take some time, go get some coffee)"
     loadimdb
     saveimdb
   end
