@@ -1,12 +1,12 @@
 #!/usr/bin/env ruby
-# encoding: utf-8
+# frozen_string_literal: true
 
-# PROGRAM INFO 
-# Name:       IMDB-term
+# PROGRAM INFO {{{1
+# Name:       IMDB - Movies and Series for the terminal
 # Language:   Pure Ruby, best viewed in VIM
 # Author:     Geir Isene <g@isene.com>
 # Web_site:   http://isene.com/
-# Github:     https://github.com/isene/imdb-term
+# Github:     https://github.com/isene/IMDB
 # License:    I release all copyright claims. This code is in the public domain.
 #             Permission is granted to use, copy modify, distribute, and sell
 #             this software for any purpose. I make no guarantee about the
@@ -14,787 +14,2419 @@
 #             for any damages resulting from its use. Further, I am under no
 #             obligation to maintain or extend this software. It is provided 
 #             on an 'as is' basis without any expressed or implied warranty.
-@version = "0.7.4"
+# Version:    1.1: Full rewrite based on rcurses with much more functionality
 
-# PRELIMINARIES
-@help = <<HELPTEXT
-IMDB-term (https://github.com/isene/IMDB) Help text:
+# REQUIRES AND CONSTANTS {{{1
+require 'io/console'
+require 'open-uri'
+require 'json'
+require 'yaml'
+require 'date'
+require 'time'
+require 'timeout'
+require 'shellwords'
+require 'net/http'
+require 'uri'
+require 'cgi'
+require 'nokogiri'
+require 'fileutils'
+require 'concurrent'
+require 'rcurses'
 
-Keys         | Function
--------------+--------------------
-TAB or S-TAB | Cycle panes (active is gray) or backwards
-Arrow keys   | UP, DOWN, PgUP, PgDOWN, HOME, END in lists
-+ or -       | Depends on pane (intuitive)
-I            | Load fresh IMDB data (be patient)
-m or s       | Show MOVIES or SERIES
-r            | Select MINimum IMDB rating (in bottom line)
-y or Y       | Select MINimum or MAXimum production year
-/ or \\       | Enter or clear search for movie/series title
-G            | Set genres to match every movie/series
-d            | Get details on selected movie/series
-D            | Show where you can stream the movie/series
-R            | Refresh all panes
-v            | Show version (and latest RybyGems version)
-w or W       | Write changes to config or save IMDB data
-q or Q       | Quit w/saving config or w/o saving config
-HELPTEXT
-begin # BASIC SETUP
-  require 'net/http'
-  require 'open-uri'
-  require 'rest_client'
-  require 'json'
-  require 'readline'
-  require 'io/console'
-  require 'curses'
-  include  Curses
+include Rcurses
+include Rcurses::Cursor
+include Rcurses::Input
 
-  def cmd?(command)
-    system("which #{command} > /dev/null 2>&1")
-  end
-  if cmd?('/usr/lib/w3m/w3mimgdisplay')
-    @w3mimgdisplay = "/usr/lib/w3m/w3mimgdisplay"
-    @showimage = true
-  else
-    @showimage = false
-  end
-  @showimage = false unless (cmd?('xwininfo') and cmd?('xdotool'))
+Thread.report_on_exception = false
+CONFIG_FILE       = File.join(Dir.home, '.imdb.yml')
+DATA_DIR          = File.join(Dir.home, '.imdb', 'data')
+CACHE_MUTEX       = Mutex.new
+MAX_FETCH_RETRIES = 3
 
-  begin # Check if network is available
-    URI.open("https://www.google.com/", :open_timeout=>5)
-  rescue
-    puts "\nNo network. Running offline.\n\n"
-  end
-
-  # INITIALIZE BASIC VARIABLES 
-  ## These can be set in .imdb.conf
-  @rating     = 0
-  @yearMin    = 0
-  @yearMax    = 2100
-  @myMY       = []
-  @myMN       = []
-  @mySY       = []
-  @mySN       = []
-  ## These are IMDB specific
-  @urlmovies  = "https://www.imdb.com/search/title/?groups=top_1000&start=[1, 1001, 50]"
-  @urlseries  = "https://www.imdb.com/search/title/?title_type=tv_series&start=[1, 1001, 50]"
-  @country    = "no"
-  @lang       = "en"
-  @genres     = ["Action", "Adult", "Adventure", "Animation", "Biography", "Comedy", "Crime", "Documentary", "Drama",
-                "Family", "Fantasy", "Film Noir", "Game Show", "History", "Horror", "Musical", "Music", "Mystery", 
-                "News", "Reality-TV", "Romance", "Sci-Fi", "Short", "Sport", "Talk-Show", "Thriller", "War", "Western"]
-  @genY       = @genres.map(&:clone)
-  @genN       = []
-  ## These are internal variables
-  @imdbmovies = []
-  @imdbseries = []
-  @imdbsel    = []
-  @search     = ''
-  @new        = false 
-  @movies     = true
-  @noimage    = false
-  
-  ## Color constants (e.g. Window x fg)
-  WtMfg  = 232
-  WtSfg  = 255
-  WtMbg  = 214
-  WtMbgS = 202
-  WtSbg  =  23
-  WtSbgS =  58
-  Wifg   = 230
-  Wgfg   = 195
-  WgYfg  =  34
-  WgNfg  = 241
-  Wmfg   = 117
-  Wnfg   = 204
-  Wdfg   = 255
-  Wpfg   = 242
-  Wbfg   = 252
-  Wbbg   = 238
-  Mark   = 240
-  WAbg   = 233
-  WIbg   = 232
-end
-
-# CLASSES
-class Curses::Window # CLASS EXTENSION 
-  # General extensions (see https://github.com/isene/Ruby-Curses-Class-Extension)
-  # This is a class extension to Ruby Curses - a class in dire need of such.
-  # self.pair keeps a registry of colors as they are encountered - defined with: 
-  # init_pair(index, foreground, background)
-  # self.fg is set for the foreground color
-  # self.bg is set for the background color
-  # self.attr is set for text attributes like Curses::A_BOLD
-  # self.update can be used to indicate if a window should be updated (true/false)
-  # self.index can be used to keep track of the current list item in a window
-  attr_accessor :fg, :bg, :attr, :text, :update, :index, :list
-  def self.pair(fg, bg)
-    @p = [[]] if @p == nil
-    fg = fg.to_i; bg = bg.to_i
-    if @p.include?([fg,bg])
-      @p.index([fg,bg])
-    else
-      @p.push([fg,bg])
-      cp = @p.index([fg,bg])
-      init_pair(cp, fg, bg)
-      @p.index([fg,bg])
-    end
-  end
-  def clr # Clears the whole window
-    self.setpos(0, 0)
-    self.maxy.times {self.deleteln()}
-    self.refresh
-    self.setpos(0, 0)
-  end
-  def fill # Fill window with color as set by self.color (or self.bg if not set) 
-    self.setpos(0, 0)
-    self.fill_from_cur_pos
-  end
-  def fill_to_cur_pos # Fills the window up to current line
-    x = self.curx
-    y = self.cury
-    self.setpos(0, 0)
-    self.bg = 0 if self.bg   == nil
-    self.fg = 255 if self.fg == nil
-    blank = " " * self.maxx
-    cp = Curses::Window.pair(self.fg, self.bg)
-    y.times {self.attron(color_pair(cp)) {self << blank}}
-    self.refresh
-    self.setpos(y, x)
-  end
-  def fill_from_cur_pos # Fills the rest of the window from current line
-    x = self.curx
-    y = self.cury
-    self.setpos(y, 0)
-    self.bg = 0 if self.bg   == nil
-    self.fg = 255 if self.fg == nil
-    blank = " " * self.maxx
-    cp = Curses::Window.pair(self.fg, self.bg)
-    self.maxy.times {self.attron(color_pair(cp)) {self << blank}}
-    self.refresh
-    self.setpos(y, x)
-  end
-  def p(fg = self.fg, bg = self.bg, attr = self.attr, text) # Puts text to window with full set of attributes
-    fg   = 255 if fg   == nil
-    bg   = 0   if bg   == nil
-    attr = 0   if attr == nil
-    cp   = Curses::Window.pair(fg, bg)
-    self.attron(color_pair(cp) | attr) { self << text }
-    self.refresh
-  end
-  def nl(bg = self.bg)
-    bg = 232 if bg == nil
-    f  = " " * (self.maxx - self.curx)
-    self.p(self.fg, bg, self.attr, f)
-  end
-  def format(text) # Format text so that it linebreaks neatly inside window
-    return "\n" + text.gsub(/(.{1,#{self.maxx-1}})( +|$\n?)|(.{1,#{self.maxx-1}})/, "\\1\\3\n")
-  end
-  alias :puts :p
-end
-
-# GENERIC FUNCTIONS 
-def firstrun
-  puts  "Welcome to IMDB-term, the IMDB application for the terminal."
-  puts  "\nFind your next movie or series to binge. Narrow down your preferences from a 1000 movies and almost 500 series."
-  puts  "Select a minimum IMDB rating, range of production years, genres you like and dislike to get your preferred list."
-  puts  "Get detailed information on movies and series and where you can stream them. Even the movie poster in the terminal."
-  puts  "\nLet's first look at the help text (accessible in the program via the key '?'):\n\n"
-  puts  @help
-  print "\nPress any key... "; STDIN.getch
-  system("clear")
-  puts  "We will now walk you through the steps you need to do to make use of this application:"
-  puts  "\n 1. Go to the website https://www.page2api.com/"
-  print "    Create a free account and paste your API_KEY here (then press ENTER): "
-  conf  = "@imdbkey = '" 
-  conf += gets.chomp + "'\n"
-  puts  "\n 2. Go to the website https://www.omdbapi.com/apikey.aspx"
-  print "    Create a free account and paste your API KEY here (then press ENTER): "
-  conf += "@omdbkey = '" 
-  conf += gets.chomp + "'\n"
-  puts  "\n 3. Go to the website https://rapidapi.com/movie-of-the-night-movie-of-the-night-default/api/streaming-availability"
-  print "    Create a free account and paste your X-RapidAPI-Key here (then press ENTER): "
-  conf += "@streamkey = '" 
-  conf += gets.chomp + "'\n"
-  File.write(Dir.home+'/.imdb.conf', conf)
-  puts "\n\nYour keys have now been written to the configuration file (.imdb.conf). You can edit this file manually if needed."
-  print "\nPress 'y' to start imdb-term "; y = STDIN.getch
-  exit if y != "y"
-end
-def getchr # PROCESS KEY PRESSES
-  c = STDIN.getch #(min: 0, time: 1) 
-  case c
-  when "\e"    # ANSI escape sequences
-    case $stdin.getc
-    when '['   # CSI
-      case $stdin.getc
-      when 'A' then chr = "UP"
-      when 'B' then chr = "DOWN"
-      when 'C' then chr = "RIGHT"
-      when 'D' then chr = "LEFT"
-      when 'Z' then chr = "S-TAB"
-      when '2' then chr = "INS"    ; STDIN.getc
-      when '3' then chr = "DEL"    ; STDIN.getc
-      when '5' then chr = "PgUP"   ; STDIN.getc
-      when '6' then chr = "PgDOWN" ; STDIN.getc
-      when '7' then chr = "HOME"   ; STDIN.getc
-      when '8' then chr = "END"    ; STDIN.getc
-      end
-    end
-  when "", "" then chr = "BACK"
-  when "" then chr = "C-C"
-  when "" then chr = "C-G"
-  when "" then chr = "C-T"
-  when "" then chr = "LDEL"
-  when "" then chr = "WBACK"
-  when "\r" then chr = "ENTER"
-  when "\t" then chr = "TAB"
-  when /./  then chr = c
-  end
-  return chr
-end
-def getkey # GET KEY FROM USER
-  chr = getchr
-  case chr
-  when '?' # Show helptext in right window 
-    @w_d.fill
-    @w_d.p(@help)
-    @w_d.update = false
-  when 'UP'
-    @active.index = @active.index <= 0 ? @active.list.size - 1 : @active.index - 1
-  when 'DOWN'
-    @active.index = @active.index >= @active.list.size - 1 ? 0 : @active.index + 1
-  when 'PgUP'
-    @active.index -= @active.maxy - 2
-    @active.index = 0 if @active.index < 0
-  when 'PgDOWN'
-    @active.index += @active.maxy - 2
-    @active.index = @active.list.size - 1 if @active.index > @active.list.size - 1
-  when 'HOME'
-    @active.index = 0
-  when 'END'
-    @active.index = @active.list.size - 1
-  when 'TAB'
-    case @active
-    when @w_i
-      @active = @w_g
-    when @w_g
-      @active = @w_m 
-    when @w_m
-      @active = @w_n
-    when @w_n
-      @active = @w_i
-    end
-  when 'S-TAB'
-    case @active
-    when @w_i
-      @active = @w_n
-    when @w_n
-      @active = @w_m
-    when @w_m
-      @active = @w_g
-    when @w_g
-      @active = @w_i 
-    end
-  when 'I'
-    w_b("Loading IMDB data...")
-    loadimdb
-  when 'm'
-    @movies  = true
-  when 's'
-    @movies  = false
-  when 'r'
-    r = w_b_getstr(" Set MINimum Rating: ", "")
-    @rating  = r.to_f unless r == ""
-  when 'y'
-    y = w_b_getstr(" Set MINimum Year: ", "")
-    @yearMin = y.to_i unless y == ""
-  when 'Y'
-    y = w_b_getstr(" Set MAXimum Year: ", "")
-    @yearMax = y.to_i unless y == ""
-  when '/'
-    @search  = w_b_getstr(" Search for title: ", "")
-  when '\\'
-    @search  = ''
-  when 'G'
-    @genY    = @genres.map(&:clone)
-    @genN    = []
-  when '+'
-    case @active
-    when @w_i
-      @myY.push(@active.list[@active.index])
-      @active.index = 0 if @active.index > @active.list.size - 2
-    when @w_g
-      @genY.push(@active.list[@active.index]) unless @genN.include?(@active.list[@active.index])
-      @genN.delete(@active.list[@active.index])
-      @active.index = @active.index >= @active.list.size - 1 ? 0 : @active.index + 1
-    when @w_m
-      @myN.delete(@active.list[@active.index])
-    when @w_n
-      @myY.push(@active.list[@active.index])
-      @myN.delete(@active.list[@active.index])
-      @active.index -= 1 if @active.index == @active.list.size
-    end
-  when '-'
-    case @active
-    when @w_i
-      @myN.push(@active.list[@active.index])
-      @active.index = 0 if @active.index > @active.list.size - 2
-    when @w_g
-      @genN.push(@active.list[@active.index]) unless @genY.include?(@active.list[@active.index])
-      @genY.delete(@active.list[@active.index])
-      @active.index = @active.index >= @active.list.size - 1 ? 0 : @active.index + 1
-    when @w_m
-      @myY.delete(@active.list[@active.index])
-      @active.index -= 1 if @active.index == @active.list.size
-    when @w_n
-      @myN.delete(@active.list[@active.index])
-      @active.index -= 1 if @active.index == @active.list.size
-    end
-  when 'd'
-    @w_d.fill
-    w_d(1)
-    @w_d.update = false
-  when 'D'
-    @w_d.fill
-    w_d(2)
-    @w_d.update = false
-  when 'R' # Refresh all windows 
-    @break = true
-  when '@' # Enter "Ruby debug"
-    cmd = w_b_getstr("◆ ", "")
-    begin
-      @w_d.fill
-      @w_d.p(eval(cmd))
-    rescue StandardError => e
-      w_b("Error: #{e.inspect}")
-    end
-    @w_b.update = false
-  when 'v'
-    w_b("Version = #{@version} (latest RubyGems version is #{Gem.latest_version_for("imdb-terminal").version} - https://github.com/isene/IMDB)")
-  when 'w'
-    saveconf
-  when 'W'
-    saveimdb
-  when 'q' # Exit 
-    saveconf
-    exit 0
-  when 'Q' # EXIT 
-    exit 0
-  end
-end
-def getimdb(url)
-  api_url = "https://www.page2api.com/api/v1/scrape"
-  payload = {
-    api_key: @imdbkey,
-    batch: {
-      urls: url,
-      concurrency: 1,
-      merge_results: true
-    },
-    parse: {
-      movies: [
-        {
-          title: ".lister-item-header >> text",
-          url: ".lister-item-header a >> href",
-          id: ".userRatingValue >> data-tconst",
-          year: ".lister-item-year >> text",
-          genre: ".genre >> text",
-          votes: "[name=nv] >> text",
-          rating: ".ratings-imdb-rating >> data-value",
-          _parent: ".lister-item",
-          runtime: ".runtime >> text",
-          certificate: ".certificate >> text"
-        }
-      ]
-    },
-    datacenter_proxy: "us"
-  }
-  response = RestClient::Request.execute(
-    method: :post,
-    payload: payload.to_json,
-    url: api_url,
-    headers: { "Content-type" => "application/json" },
-  ).body
-  res = JSON.parse(response)
-  imdb = []
-  res["result"]["movies"].each {|m| imdb.push [m["title"].sub(/^\d+\. /, ''), m["rating"].to_f, m["year"].delete("^0-9").to_i, m["genre"], m["id"]]}
-  imdb
-end
-def loadimdb
-  @imdbmovies = getimdb(@urlmovies)
-  @imdbseries = getimdb(@urlseries)
-  @new = true
-end
-def imdbmovies
-  if @search == ''
-    @imdbsel = @imdbmovies.map{|m| m if (m[1] >= @rating) and ((@yearMin..@yearMax) === m[2])}
-  else
-    @imdbsel = @imdbmovies.map{|m| m if (m[0] =~ /#{@search}/)}
-  end
-  @imdbsel.select! do |i| 
-    ig = i[3].split(", ") unless i == nil 
-    (ig & @genY).any? unless ig == nil
-  end
-  @imdbsel.select! {|i| (i[3].split(", ") & @genN).empty?}
-  @imdbsel = @imdbsel - @myMN - @myMY
-  @myMYsel = @myMY - @myMN
-  [@imdbsel, @myMYsel, @myMY, @myMN, @genY, @genN].each do |arr|
-    arr.uniq!
-    arr.compact!
-    arr.sort_by! {|m| m[0]}
-  end
-  @w_i.list  = @imdbsel
-  @w_i.index = 0 if @w_i.index > @w_i.list.size - 1
-  @w_m.list  = @myMYsel
-  @w_n.list  = @myMN
-  @myN       = @myMN
-  @myY       = @myMY
-end
-def imdbseries
-  if @search == ''
-    @imdbsel = @imdbseries.map{|m| m if (m[1] > @rating) and ((@yearMin..@yearMax) === m[2])}
-  else
-    @imdbsel = @imdbseries.map{|m| m if (m[0] =~ /#{@search}/)}
-  end
-  @imdbsel.select! do |i| 
-    ig = i[3].split(", ") unless i == nil 
-    (ig & @genY).any? unless ig == nil
-  end
-  @imdbsel.select! {|i| (i[3].split(", ") & @genN).empty?}
-  @imdbsel = @imdbsel - @mySN - @mySY
-  @mySYsel = @mySY - @mySN
-  [@imdbsel, @mySYsel, @mySY, @mySN, @genY, @genN].each do |arr|
-    arr.uniq!
-    arr.compact!
-    arr.sort_by! {|m| m[0]}
-  end
-  @w_i.list  = @imdbsel
-  @w_i.index = 0 if @w_i.index > @w_i.list.size - 2
-  @w_m.list  = @mySYsel
-  @w_n.list  = @mySN
-  @myN       = @mySN
-  @myY       = @mySY
-end
-def getomdb(id)
-  @urldetails = "http://www.omdbapi.com/?apikey=#{@omdbkey}&i=#{id}"
-  details = Net::HTTP.get(URI(@urldetails))
-  det     = JSON.parse(details)
-  return det
-end
-def getstreaming(id) # Returns array of outlets
-  url = URI("https://streaming-availability.p.rapidapi.com/v2/get/basic?country=#{@country}&imdb_id=#{id}&output_language=#{@lang}")
-  http = Net::HTTP.new(url.host, url.port)
-  http.use_ssl = true
-  request = Net::HTTP::Get.new(url)
-  request["X-RapidAPI-Key"] = @streamkey
-  request["X-RapidAPI-Host"] = 'streaming-availability.p.rapidapi.com'
-  response = http.request(request)
-  res      = JSON.parse(response.read_body)
-  outlets  = []
-  begin
-    res["result"]["streamingInfo"][@country].each{|k,v| outlets.push(k)}
-    return outlets
-  rescue
-    return [outlets.to_s]
-  end
-end
-def saveconf
-  if File.exist?(Dir.home+'/.imdb.conf')
-    conf = File.read(Dir.home+'/.imdb.conf')
-  else
-    conf = ""
-  end
-  conf.gsub!(/^@rating.*\n/, "") 
-  conf += "@rating = #{@rating}\n"
-  conf.gsub!(/^@yearMin.*\n/, "") 
-  conf += "@yearMin = #{@yearMin}\n"
-  conf.gsub!(/^@yearMax.*\n/, "") 
-  conf += "@yearMax = #{@yearMax}\n"
-  conf.gsub!(/^@genY.*\n/, "") 
-  conf += "@genY = #{@genY}\n"
-  conf.gsub!(/^@genN.*\n/, "") 
-  conf += "@genN = #{@genN}\n"
-  conf.gsub!(/^@myMY.*\n/, "") 
-  conf += "@myMY = #{@myMY}\n"
-  conf.gsub!(/^@myMN.*\n/, "") 
-  conf += "@myMN = #{@myMN}\n"
-  conf.gsub!(/^@mySY.*\n/, "") 
-  conf += "@mySY = #{@mySY}\n"
-  conf.gsub!(/^@mySN.*\n/, "") 
-  conf += "@mySN = #{@mySN}\n"
-  w_b("Configuration written to .imdb.conf")
-  File.write(Dir.home+'/.imdb.conf', conf)
-end
-def saveimdb
-  if File.exist?(Dir.home+'/.imdb')
-    data = File.read(Dir.home+'/.imdb')
-  else
-    data = ""
-  end
-  data.gsub!(/^@imdbmovies.*\n/, "") 
-  data += "@imdbmovies = #{@imdbmovies}\n"
-  data.gsub!(/^@imdbseries.*\n/, "") 
-  data += "@imdbseries = #{@imdbseries}\n"
-  w_b("IMDB data written to .imdb")
-  File.write(Dir.home+'/.imdb', data)
-end
-
-# BASIC WINDOW FUNCTIONS 
-def w_t # SHOW INFO IN @w_t
-  @w_t.clr
-  @movies ? text  = " MOVIES ::  " : text  = " SERIES ::  "
-  text += "Rating MIN: #{@rating} - Year MIN: #{@yearMin} - Year MAX: #{@yearMax} :: Selection = #{@imdbsel.size}"
-  @w_t.p(text)
-  @w_t.nl
-end
-def w_list(win) # LIST IN WINDOW
-  win.attr = 0
-  win == @active ? win.bg = WAbg : win.bg = WIbg
-  win.fill
-  ix = 0; t = 0
-  ix = win.index - win.maxy/2 if win.index > win.maxy/2 and win.list.size > win.maxy - 1
-  while ix < win.list.size and t < win.maxy do
-    str  = win.list[ix][0]
-    str  = win.list[ix] if win == @w_g
-    if ix == win.index and win == @active
-      win.p("→ ")
-    else
-      win.p("  ")
-    end
-    if win == @w_g
-      if @genY.include?(str)
-        win.fg   = WgYfg
-        win.attr = Curses::A_BOLD
-        win.p("+")
-      elsif @genN.include?(str)
-        win.fg   = WgNfg
-        win.p("-")
+# MAIN CLASS {{{1
+class IMDBApp
+  # INITIALIZATION {{{1
+  def initialize #{{{2
+    @bg_total   = Concurrent::AtomicFixnum.new(0)
+    @bg_fetched = Concurrent::AtomicFixnum.new(0)
+    @fetching   = false
+    load_config
+    setup_ui
+    @index_list = []; @movies = []; @series = []
+    
+    cache = cache_dir
+    list_file = File.join(cache, 'list.json')
+    if !File.exist?(list_file)
+      answer = @progress.ask("No data found. Scrape now? (Y/n) ", "Y")
+      if answer.strip.empty? || answer =~ /\A[yY]/
+        FileUtils.rm_rf(cache); FileUtils.mkdir_p(cache)
+        @progress.say("Scraping IMDb top lists...")
+        load_top250
+        @progress.say("Starting initial fetch of #{@movies.size + @series.size} items...")
+        start_background_fetch
       else
-        win.fg   = Wgfg
-        win.p(" ")
+        exit
+      end
+    else
+      load_data
+    end
+    if @tmdb_key.nil? || @tmdb_key.strip.empty?
+      @tmdb_key = @progress.ask("TMDb API key not found. Enter key (or press Enter to skip): ", "").strip
+    end
+    build_genre_list
+    rebuild_index
+    @list.border = true
+    @last_poster_id = nil
+    
+    run_loop
+  ensure
+    save_config
+  end
+
+  # CONFIGURATION {{{1
+  def load_config #{{{2
+    cfg = File.exist?(CONFIG_FILE) ? (YAML.load_file(CONFIG_FILE) || {}) : {}
+    @rating_threshold = cfg.fetch('rating_threshold', 7.5)
+    @show_movies      = cfg.fetch('show_movies', true)
+    @show_series      = cfg.fetch('show_series', false)
+    @movie_limit      = cfg.fetch('movie_limit', 250)
+    @series_limit     = cfg.fetch('series_limit', 250)
+    @sort_by          = cfg.fetch('sort_by', 'rating').to_sym
+    @details_cache    = Concurrent::Map.new
+    @genre_filters    = cfg.fetch('genre_filters', {}).transform_keys(&:to_s).transform_values(&:to_i)
+    
+    # Separate wish and dump lists for movies and series
+    @movie_wish_list  = cfg.fetch('movie_wish_list', [])
+    @series_wish_list = cfg.fetch('series_wish_list', [])
+    @movie_dump_list  = cfg.fetch('movie_dump_list', [])
+    @series_dump_list = cfg.fetch('series_dump_list', [])
+    
+    @tmdb_key         = cfg.fetch('tmdb_key', ENV['TMDB_KEY'])
+    @tmdb_region      = cfg.fetch('tmdb_region', 'US')
+    @year_min         = cfg.fetch('year_min', nil)
+    @year_max         = cfg.fetch('year_max', nil)
+  end
+
+  def save_config #{{{2
+    File.write CONFIG_FILE, {
+      'rating_threshold' => @rating_threshold,
+      'show_movies'      => @show_movies,
+      'show_series'      => @show_series,
+      'movie_limit'      => @movie_limit,
+      'series_limit'     => @series_limit,
+      'sort_by'          => @sort_by.to_s,
+      'genre_filters'    => @genre_filters,
+      'movie_wish_list'  => @movie_wish_list,
+      'series_wish_list' => @series_wish_list,
+      'movie_dump_list'  => @movie_dump_list,
+      'series_dump_list' => @series_dump_list,
+      'tmdb_key'         => @tmdb_key,
+      'tmdb_region'      => @tmdb_region,
+      'year_min'         => @year_min,
+      'year_max'         => @year_max
+    }.to_yaml
+  end
+
+  def get_regions #{{{2
+    {
+      'US' => 'United States', 'GB' => 'United Kingdom', 'CA' => 'Canada',
+      'AU' => 'Australia', 'DE' => 'Germany', 'FR' => 'France', 'ES' => 'Spain',
+      'IT' => 'Italy', 'NL' => 'Netherlands', 'SE' => 'Sweden', 'NO' => 'Norway',
+      'DK' => 'Denmark', 'JP' => 'Japan', 'KR' => 'South Korea', 'IN' => 'India',
+      'BR' => 'Brazil', 'MX' => 'Mexico', 'AR' => 'Argentina', 'CL' => 'Chile',
+      'AT' => 'Austria', 'BE' => 'Belgium', 'CH' => 'Switzerland', 'FI' => 'Finland',
+      'IE' => 'Ireland', 'PT' => 'Portugal', 'GR' => 'Greece', 'CZ' => 'Czech Republic',
+      'PL' => 'Poland', 'HU' => 'Hungary', 'RO' => 'Romania', 'SG' => 'Singapore',
+      'MY' => 'Malaysia', 'TH' => 'Thailand', 'ID' => 'Indonesia', 'PH' => 'Philippines',
+      'TW' => 'Taiwan', 'HK' => 'Hong Kong', 'NZ' => 'New Zealand'
+    }
+  end
+
+  # DATA MANAGEMENT {{{1
+  def cache_dir #{{{2
+    FileUtils.mkdir_p(DATA_DIR) unless Dir.exist?(DATA_DIR)
+    DATA_DIR
+  end
+
+  def load_data #{{{2
+    cache     = cache_dir
+    list_file = File.join(cache, 'list.json')
+    details_file = File.join(cache, 'details.json')
+    begin
+      load_from_cache(cache)
+    rescue Errno::ENOENT, JSON::ParserError
+      FileUtils.rm_rf(cache); FileUtils.mkdir_p(cache)
+      perform_scrape_and_cache(cache)
+    end
+  end
+
+  def load_from_cache(cache) #{{{2
+    @footer.say(" Loading cache…")
+    list = JSON.parse(File.read(File.join(cache,'list.json')), symbolize_names: true)
+    @movies, @series = list[:movies], list[:series]
+    raw = JSON.parse(File.read(File.join(cache,'details.json')), symbolize_names: true)
+    raw = JSON.parse(raw, symbolize_names: true) if raw.is_a?(String)
+    @details_cache = Concurrent::Map.new
+    raw.each { |k, v| @details_cache[k.to_s] = v }
+    @footer.say("✓ Loaded cache"); sleep 1.5
+  end
+
+  def perform_scrape_and_cache(cache) #{{{2
+    load_top250
+    @bg_total.value   = @movies.size + @series.size
+    @bg_fetched.value = 0
+    @progress.say("Fetching details & posters in background… Go grab a coffee.")
+    start_background_fetch
+  end
+
+  def build_genre_list #{{{2
+    all = @details_cache.values.flat_map{|d| d[:genres]||[]}.uniq.sort
+    @genres_list = all
+    all.each{|g| @genre_filters[g] ||= 0 }
+    @genre_filters.keys.reject{|g| all.include?(g)}.each{|g| @genre_filters.delete(g)}
+  end
+
+  def rebuild_index #{{{2
+    list = []
+    list += @movies if @show_movies
+    list += @series if @show_series
+    list.select! { |e| e[:rating] >= @rating_threshold }
+
+    # Use appropriate dump list based on current view
+    current_dump_list = @show_movies ? @movie_dump_list : @series_dump_list
+    list.reject! { |e| current_dump_list.include?(e[:id]) }
+
+    # Genre filtering logic
+    pos = @genre_filters.select{|_,v| v==1}.keys
+    neg = @genre_filters.select{|_,v| v==-1}.keys
+
+    list.select! do |e|
+      d = @details_cache[e[:id]] || {}
+      gens = Array(d[:genres])
+
+      # Genre filters
+      pos_match = pos.empty? || pos.all? { |genre| gens.include?(genre) }
+      neg_match = (gens & neg).empty?
+
+      # Year filters
+      year_match = true
+      if @year_min || @year_max
+        # For movies, use release_date; for series, use start_date
+        date_str = d[:type] == 'TVSeries' ? d[:start_date] : d[:release_date]
+        year = date_str.to_s[0,4].to_i if date_str
+
+        # For series, also check if it was running during the period
+        if d[:type] == 'TVSeries' && d[:end_date]
+          end_year = d[:end_date].to_s[0,4].to_i
+          # Series matches if it overlaps with the filter period
+          if year && end_year && end_year > 0
+            series_start = year
+            series_end = end_year
+            filter_start = @year_min || 0
+            filter_end = @year_max || 9999
+            year_match = series_end >= filter_start && series_start <= filter_end
+          elsif year && year > 0
+            year_match = (!@year_min || year <= @year_max.to_i) && (!@year_max || year >= @year_min.to_i)
+          else
+            year_match = false
+          end
+        elsif year && year > 0
+          year_match = true
+          year_match = false if @year_min && year < @year_min
+          year_match = false if @year_max && year > @year_max
+        else
+          year_match = false
+        end
+      end
+
+      pos_match && neg_match && year_match
+    end
+
+    @index_list = if @sort_by == :alpha
+      list.sort_by { |e| e[:title].downcase }
+    else
+      list.sort_by { |e| -e[:rating] }
+    end
+
+    # clamp index
+    if @index_list.empty?
+      @list.index = 0
+    else
+      max_i = @index_list.size - 1
+      @list.index = [[@list.index,0].max, max_i].min
+    end
+  end
+
+  def create_error_stub(error_type) #{{{2
+    {
+      title: "", rating: 0.0, votes: 0,
+      genres: [], directors: [], actors: [],
+      summary: "Failed to fetch details", 
+      content_rating: "", duration: "",
+      release_date: "", country: "",
+      start_date: "", end_date: "",
+      providers: [], popularity: 0.0,
+      seasons: nil, episodes: nil,
+      error: error_type, type: ""
+    }
+  end
+
+  def save_current_state #{{{2
+    cache = cache_dir
+
+    CACHE_MUTEX.synchronize do
+      File.write(File.join(cache, 'list.json'), { movies: @movies, series: @series }.to_json)
+      plain = {}
+      @details_cache.each_pair { |k, v| plain[k] = v }
+      File.write(File.join(cache, 'details.json'), JSON.pretty_generate(plain))
+    end
+  end
+
+  def decode_html_entities(text) #{{{2
+    return "" if text.nil? || text.empty?
+    CGI.unescapeHTML(text.to_s)
+  end
+
+  # UI SETUP {{{1
+  def setup_ui #{{{2
+    Rcurses.clear_screen; Cursor.hide
+    rows, cols = IO.console.winsize
+    @header   = Pane.new(  1,          1,       cols,          1, 255, 236)
+    @list     = Pane.new(  2,          3,         50,   rows - 4, 252,   0)
+    @genres   = Pane.new( 53,          3,         16,   rows - 4, 248, 232)
+    @wish     = Pane.new( 70,          3,         30, rows/2 - 2,  64, 232)
+    @dump     = Pane.new( 70, rows/2 + 2,         30, rows/2 - 3, 130, 232)
+    @detail   = Pane.new(102,          3, cols - 100,   rows - 4, 255,   0)
+    @footer   = Pane.new(  1,       rows,       cols,          1, 255, 236)
+    @progress = Pane.new(  1,       rows,       cols,          1, 255,  17)
+    
+    # Add help pane
+    help_w = cols / 2; help_h = rows / 2
+    @help = Pane.new((cols - help_w) / 2 + 1, (rows - help_h) / 2 + 1, help_w, help_h, 252, 234)
+    @help.border = true; @help.index = 0; @help.ix = 0
+    
+    [@list, @genres, @wish, @dump].each do |p|
+      p.index = 0
+      p.ix    = 0
+    end
+    @focus = @list
+    @list.border = true
+    @help_mode = :hidden
+  end
+
+  def refresh_layout #{{{2
+    rows, cols  = IO.console.winsize
+    @header.x   = 1;   @header.y = 1;          @header.w = cols;       @header.h = 1
+    @list.x     = 2;   @list.y   = 3;          @list.w   = 50;         @list.h = rows - 4
+    @genres.x   = 53;  @genres.y = 3;          @genres.w = 16;         @genres.h = rows - 4
+    @wish.x     = 70;  @wish.y   = 3;          @wish.w   = 30;         @wish.h = (rows/2 - 2)
+    @dump.x     = 70;  @dump.y   = rows/2 + 2; @dump.w   = 30;         @dump.h = (rows/2 - 3)
+    @detail.x   = 102; @detail.y = 3;          @detail.w = cols - 100; @detail.h = rows - 4
+    @footer.x   = 1;   @footer.y = rows;       @footer.w = cols;       @footer.h = 1
+    @progress.x = 1;   @progress.y = rows;     @progress.w = cols;     @progress.h = 1
+    
+    # Update help pane layout
+    help_w = cols / 2; help_h = rows / 2
+    @help.x = (cols - help_w) / 2 + 1; @help.y = (rows - help_h) / 2 + 1; @help.w = help_w; @help.h = help_h
+  end
+
+  # SCRAPING AND FETCHING {{{1
+  def load_top250 #{{{2
+    ua = "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/117.0"
+    @movies = scrape_json_ld('chart/top',   ua).take(@movie_limit)
+    @series = scrape_json_ld('chart/toptv', ua).take(@series_limit)
+    @progress.say("✓ Scraped #{@movies.size} movies, #{@series.size} series")
+  end
+
+  def load_additional_lists #{{{2
+    ua = "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/117.0"
+    
+    @progress.say("Fetching popular movies...")
+    popular_movies = scrape_json_ld('chart/moviemeter', ua).take(100)
+    
+    @progress.say("Fetching popular TV series...")
+    popular_series = scrape_json_ld('chart/tvmeter', ua).take(100)
+    
+    @progress.say("Fetching trending content...")
+    # Try different trending endpoints
+    trending_content = []
+    ['trending/movie', 'trending/tv'].each do |path|
+      begin
+        trending_content += scrape_trending(path, ua).take(50)
+      rescue
+        # Continue if one fails
       end
     end
-    win.attr = win.attr | Curses::A_UNDERLINE if ix == win.index
-    str      = str[0..(win.maxx - 6)] + "…" if str.length > win.maxx - 4
-    win.p(str)
-    win.attr = 0
-    win.nl
-    ix += 1; t += 1
-  end
-  if win.index > win.maxy/2
-    win.setpos(0, win.maxx - 1)
-    win.p(Mark,"∆")
-  end
-  if win.list.length > win.maxy - 1 and win.list.length > win.index + win.maxy/2 - 1
-    win.setpos(win.maxy - 1, win.maxx - 1)
-    win.p(Mark,"∇")
-  end
-end
-def w_d(ext = 0) # SHOW INFO IN @w_d and @w_p
-  return if @active == @w_g 
-  list = @active.list
-  return if list.empty? # Skip if list is empty
-  id  = list[@active.index][4] 
-  @w_d.clr
-  @w_d.attr  = Curses::A_BOLD
-  @w_d.p("#{list[@active.index][0]}\n\n")
-  @w_d.attr  = 0
-  @w_d.p(153,232,Curses::A_BOLD,"Rating:    " + list[@active.index][1].to_s.ljust(14) + "Genres:  #{list[@active.index][3]}\n")
-  return unless ext > 0 # Skip if no details are to be displayed
-  det = getomdb(id)
-  text  = "\nRated:     " + det["Rated"].ljust(14)                + "Runtime: #{det["Runtime"]}"
-  text += " (#{det["totalSeasons"]})" unless det["totalSeasons"] == nil
-  text += "\n"
-  text += "Released:  " + det["Released"].ljust(14)
-  @w_d.p(230,text)
-  @w_d.p(244,"(#{id})\n")
-  width = Curses.cols - 104
-  @w_d.p(228,@w_d.format(det["Plot"]))
-  text  = "\n"
-  text += "Awards:    " + det["Awards"]    + "\n"
-  text += "Director:  " + det["Director"]  + "\n"
-  text += "Actors:    " + det["Actors"]    + "\n\n"
-  @w_d.p(223,text)
-  text  = "Metascore: " + det["Metascore"] + "\n\n"
-  @w_d.p(230,text)
-  # Display the poster
-  poster     = det["Poster"]
-  `curl -s "#{poster}" > /tmp/imdb.jpg`
-  imageshow("/tmp/imdb.jpg")
-  return unless ext > 1 # Skip if no outlets are to be displayed
-  outlets    = ""
-  otl = getstreaming(id)
-  otl.each{|o| outlets += "#{o}  "}
-  text  = "Outlets:   " + outlets
-  @w_d.p(112,text)
-end
-def imageshow(image)
-  begin
-    terminfo    = `xwininfo -id $(xdotool getactivewindow)`
-    term_w      = terminfo.match(/Width: (\d+)/)[1].to_i
-    term_h      = terminfo.match(/Height: (\d+)/)[1].to_i
-    char_w      = term_w / Curses.cols
-    char_h      = term_h / Curses.lines
-    img_x       = char_w * 105
-    img_y       = char_h * (Curses.lines / 2 + 2)
-    img_max_w   = char_w * (Curses.cols - (Curses.cols - 104) - 2)
-    img_max_h   = char_h * (@w_d.maxy - 2)
-    # Clear previous images
-    `echo "6;#{img_x};#{img_y};#{img_max_w+2};#{img_max_h+2};\n4;\n3;" | #{@w3mimgdisplay} 2>/dev/null`
-    return if image == ""
-    img_w,img_h = `identify -format "%[fx:w]x%[fx:h]" #{image} 2>/dev/null`.split('x')
-    img_w       = img_w.to_i
-    img_h       = img_h.to_i
-    if img_w > img_max_w
-      img_h = img_h * img_max_w / img_w 
-      img_w = img_max_w
+    
+    # Merge without duplicates
+    initial_movie_count = @movies.size
+    initial_series_count = @series.size
+    
+    # Add popular movies (avoid duplicates)
+    popular_movies.each do |movie|
+      unless @movies.any? { |m| m[:id] == movie[:id] }
+        @movies << movie
+      end
     end
-    if img_h > img_max_h
-      img_w = img_w * img_max_h / img_h
-      img_h = img_max_h
+    
+    # Add popular series (avoid duplicates)
+    popular_series.each do |series|
+      unless @series.any? { |s| s[:id] == series[:id] }
+        @series << series
+      end
     end
-    `echo "0;1;#{img_x};#{img_y};#{img_w};#{img_h};;;;;\"#{image}\"\n4;\n3;" | #{@w3mimgdisplay} 2>/dev/null`
+    
+    # Add trending content (classify and avoid duplicates)
+    trending_content.each do |item|
+      # Classify as movie or series based on existing data or fetch basic info
+      if item[:type] && item[:type].include?('Series')
+        unless @series.any? { |s| s[:id] == item[:id] }
+          @series << item
+        end
+      else
+        unless @movies.any? { |m| m[:id] == item[:id] }
+          @movies << item
+        end
+      end
+    end
+    
+    new_movies = @movies.size - initial_movie_count
+    new_series = @series.size - initial_series_count
+    
+    @progress.say("✓ Added #{new_movies} new movies, #{new_series} new series")
+  end
+
+  def scrape_trending(path, ua) #{{{2
+    # Fallback: try to scrape from IMDb trending or popular pages
+    uri = "https://www.imdb.com/#{path}/"
+    
+    begin
+      raw = `curl -sfL -H "User-Agent: #{ua}" "#{uri}"`
+      html = raw.force_encoding('UTF-8').scrub('')
+      doc = Nokogiri::HTML(html)
+      
+      # Try to extract from various possible selectors
+      results = []
+      
+      # Look for title links
+      doc.css('a[href*="/title/tt"]').each do |link|
+        href = link['href']
+        next unless href =~ %r{/title/(tt\d+)/}
+        
+        id = $1
+        title_text = link.text.strip
+        next if title_text.empty?
+        
+        # Try to get rating from nearby elements
+        rating = 0.0
+        rating_elem = link.parent.css('.ratingGroup--imdb-rating, .ipc-rating-star, .rating').first
+        if rating_elem
+          rating_text = rating_elem.text
+          rating = rating_text[/\d+\.?\d*/].to_f if rating_text
+        end
+        
+        results << {
+          id: id,
+          title: title_text,
+          rating: rating,
+          type: path.include?('tv') ? 'TVSeries' : 'Movie'
+        }
+        
+        break if results.size >= 50  # Limit results
+      end
+      
+      results.uniq { |r| r[:id] }
+    rescue => e
+      @progress.say("Warning: Could not fetch from #{path}: #{e.message}")
+      []
+    end
+  end
+
+  def scrape_json_ld(path, ua) #{{{2
+    uri = "https://www.imdb.com/#{path}/"
+    raw = `curl -sfL -H "User-Agent: #{ua}" "#{uri}"`
+    html = raw.force_encoding('UTF-8').scrub('')
+    doc = Nokogiri::HTML(html)
+    
+    if (ld = doc.at_css('script[type="application/ld+json"]'))
+      begin
+        data = JSON.parse(ld.text)
+        return data.fetch('itemListElement', []).map do |li|
+          item = li['item'] || {}
+          href = item['url'] || ''
+          id   = href[%r{/title/(tt\d+)/},1] or next
+          {
+            id:     id,
+            title:  decode_html_entities(item['name']).clean_ansi,
+            rating: item.dig('aggregateRating','ratingValue').to_f
+          }
+        end.compact
+      rescue JSON::ParserError
+        # fall back to HTML scrape
+      end
+    end
+    
+    doc.css('.lister-list tr').map do |tr|
+      rating = tr.at_css('td.ratingColumn strong')&.text.to_f || 0.0
+      a      = tr.at_css('td.titleColumn a') or next
+      id     = a['href'][%r{/title/(tt\d+)/},1] or next
+      { id: id, title: decode_html_entities(a.text).strip, rating: rating }
+    end.compact
+  end
+
+  def fetch_details(tconst) #{{{2
+    cached = @details_cache[tconst]
+    return cached if cached && !cached[:title].to_s.empty? && !cached[:error]
+
+    retries = 0
+    begin
+      uri = URI("https://www.imdb.com/title/#{tconst}/")
+      http = Net::HTTP.new(uri.host, uri.port)
+      http.use_ssl = true
+      http.open_timeout = 10
+      http.read_timeout = 15
+
+      request = Net::HTTP::Get.new(uri.request_uri)
+      request['User-Agent'] = 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/117.0'
+      request['Accept'] = 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+      request['Accept-Language'] = 'en-US,en;q=0.9'
+
+      response = http.request(request)
+      html = response.body.force_encoding("UTF-8").scrub("")
+      doc = Nokogiri::HTML(html)
+
+      ld = doc.at_css('script[type="application/ld+json"]')&.text
+      data = if ld
+              begin
+                JSON.parse(ld)
+              rescue JSON::ParserError
+                {}
+              end
+            else
+              {}
+            end
+
+      detail = {
+        title:          decode_html_entities(data["name"]).clean_ansi,
+        rating:         data.dig("aggregateRating","ratingValue").to_f,
+        votes:          data.dig("aggregateRating","ratingCount").to_i,
+        genres:         Array(data["genre"]).map { |g| decode_html_entities(g) },
+        directors:      Array(data["director"]).map { |d| decode_html_entities(d["name"]) },
+        actors:         Array(data["actor"]).map { |a| decode_html_entities(a["name"]) },
+        summary:        decode_html_entities(data["description"]),
+        content_rating: decode_html_entities(data["contentRating"]),
+        duration:       data["duration"].to_s.sub(/^PT/,""),
+        release_date:   data["datePublished"].to_s,
+        country:        Array(data["countryOfOrigin"]).map { |c| decode_html_entities(c) }.join(", "),
+        type:           data["@type"].to_s
+      }
+
+      if data["@type"] == "TVSeries"
+        detail[:start_date] = data["datePublished"].to_s
+        detail[:end_date] = doc.at_css('time[itemprop="endDate"]')&.text || ""
+        detail[:seasons] = data["numberOfSeasons"]&.to_i
+        detail[:episodes] = data["numberOfEpisodes"]&.to_i
+      end
+
+      # Merge TMDb info
+      tmdb_info = fetch_tmdb_info(tconst)
+      detail.merge!(tmdb_info)
+
+      if detail[:type] == "TVSeries"
+        detail[:start_date] = tmdb_info[:start_date] if detail[:start_date].to_s.empty?
+        detail[:end_date] = tmdb_info[:end_date] if detail[:end_date].to_s.empty?
+        detail[:seasons] = tmdb_info[:seasons] if detail[:seasons].nil?
+        detail[:episodes] = tmdb_info[:episodes] if detail[:episodes].nil?
+      else
+        detail[:start_date] = tmdb_info[:start_date].empty? ? detail[:release_date] : tmdb_info[:start_date]
+      end
+
+      if detail[:title].to_s.empty?
+        raise "No title found for #{tconst}"
+      end
+
+      @details_cache[tconst] = detail
+      return detail
+
+    rescue => ex
+      retries += 1
+      if retries < MAX_FETCH_RETRIES
+        sleep(1.0 * retries)
+        retry
+      else
+        File.open("/tmp/imdb_fetch_errors.log", "a") do |f|
+          f.puts "[#{Time.now.iso8601}] Failed #{tconst} after #{retries} retries: #{ex.class} - #{ex.message}"
+        end
+        error_stub = create_error_stub(:fetch_error)
+        @details_cache[tconst] = error_stub
+        return error_stub
+      end
+    end
+  end
+
+  def fetch_tmdb_info(imdb_id) #{{{2
+    unless @tmdb_key && !@tmdb_key.strip.empty?
+      return { providers: [], start_date:'', end_date:'',
+               popularity: 0.0, seasons: nil, episodes: nil,
+               error: :no_key }
+    end
+    
+    begin
+      # Find the movie/TV show on TMDb using IMDb ID with proper timeout handling
+      find_uri = URI("https://api.themoviedb.org/3/find/#{imdb_id}")
+      find_uri.query = URI.encode_www_form(api_key: @tmdb_key, external_source: 'imdb_id')
+      
+      http = Net::HTTP.new(find_uri.host, find_uri.port)
+      http.use_ssl = true
+      http.open_timeout = 10
+      http.read_timeout = 15
+      
+      request = Net::HTTP::Get.new(find_uri.request_uri)
+      request['User-Agent'] = 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/117.0'
+      
+      response = http.request(request)
+      
+      if response.code.to_i != 200
+        File.open("/tmp/imdb_tmdb_debug.log", "a") do |f|
+          f.puts "[#{Time.now.iso8601}] TMDb find API returned #{response.code} for #{imdb_id}"
+        end
+        return { providers: [], start_date:'', end_date:'', popularity:0.0, seasons:nil, episodes:nil, error: :api_error }
+      end
+      
+      find_res = JSON.parse(response.body)
+      
+      # Check for invalid API key
+      if find_res['status_code'] == 7 || find_res['success'] == false
+        return { providers: [], start_date:'', end_date:'', popularity:0.0, seasons:nil, episodes:nil, error: :invalid_key }
+      end
+      
+      movie = find_res.dig('movie_results', 0)
+      tv = find_res.dig('tv_results', 0)
+      
+      if movie
+        type, tmdb_id = 'movie', movie['id']
+      elsif tv
+        type, tmdb_id = 'tv', tv['id']
+      else
+        File.open("/tmp/imdb_tmdb_debug.log", "a") do |f|
+          f.puts "[#{Time.now.iso8601}] No TMDb results found for #{imdb_id}"
+        end
+        return { providers: [], start_date:'', end_date:'', popularity:0.0, seasons:nil, episodes:nil, error: :not_found }
+      end
+      
+      # Get streaming providers with timeout handling
+      providers = []
+      begin
+        prov_uri = URI("https://api.themoviedb.org/3/#{type}/#{tmdb_id}/watch/providers")
+        prov_uri.query = URI.encode_www_form(api_key: @tmdb_key)
+        
+        prov_http = Net::HTTP.new(prov_uri.host, prov_uri.port)
+        prov_http.use_ssl = true
+        prov_http.open_timeout = 10
+        prov_http.read_timeout = 15
+        
+        prov_request = Net::HTTP::Get.new(prov_uri.request_uri)
+        prov_request['User-Agent'] = 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/117.0'
+        
+        prov_response = prov_http.request(prov_request)
+        
+        if prov_response.code.to_i == 200
+          prov_res = JSON.parse(prov_response.body)
+          
+          # Debug log the provider response
+          File.open("/tmp/imdb_tmdb_debug.log", "a") do |f|
+            region_data = prov_res.dig('results', @tmdb_region)
+            f.puts "[#{Time.now.iso8601}] Provider response for #{imdb_id} (#{@tmdb_region}): #{region_data ? 'found data' : 'no data'}"
+            if region_data
+              f.puts "  - flatrate: #{region_data['flatrate']&.size || 0} providers"
+              f.puts "  - free: #{region_data['free']&.size || 0} providers"
+              f.puts "  - ads: #{region_data['ads']&.size || 0} providers"
+              f.puts "  - rent: #{region_data['rent']&.size || 0} providers"
+              f.puts "  - buy: #{region_data['buy']&.size || 0} providers"
+            end
+          end
+          
+          region_results = prov_res.dig('results', @tmdb_region) || {}
+          
+          # Try different provider types in order of preference
+          if region_results['flatrate'] && !region_results['flatrate'].empty?
+            providers = region_results['flatrate'].map { |x| x['provider_name'] }
+          elsif region_results['free'] && !region_results['free'].empty?
+            providers = region_results['free'].map { |x| x['provider_name'] }
+          elsif region_results['ads'] && !region_results['ads'].empty?
+            providers = region_results['ads'].map { |x| x['provider_name'] }
+          else
+            # Fallback to rent/buy options
+            rent_providers = (region_results['rent'] || []).map { |x| x['provider_name'] }
+            buy_providers = (region_results['buy'] || []).map { |x| x['provider_name'] }
+            providers = (rent_providers + buy_providers).uniq
+          end
+        else
+          File.open("/tmp/imdb_tmdb_debug.log", "a") do |f|
+            f.puts "[#{Time.now.iso8601}] Provider API returned #{prov_response.code} for #{imdb_id}"
+          end
+        end
+        
+      rescue Net::TimeoutError, Net::ReadTimeout, Net::OpenTimeout => timeout_ex
+        File.open("/tmp/imdb_tmdb_debug.log", "a") do |f|
+          f.puts "[#{Time.now.iso8601}] Provider fetch timeout for #{imdb_id}: #{timeout_ex.class}"
+        end
+        providers = []
+      rescue => provider_ex
+        File.open("/tmp/imdb_tmdb_debug.log", "a") do |f|
+          f.puts "[#{Time.now.iso8601}] Provider fetch error for #{imdb_id}: #{provider_ex.message}"
+        end
+        providers = []
+      end
+      
+      # Get movie/TV details with timeout handling
+      start_date = ''
+      end_date = ''
+      seasons = nil
+      episodes = nil
+      popularity = 0.0
+      
+      begin
+        det_uri = URI("https://api.themoviedb.org/3/#{type}/#{tmdb_id}")
+        det_uri.query = URI.encode_www_form(api_key: @tmdb_key)
+        
+        det_http = Net::HTTP.new(det_uri.host, det_uri.port)
+        det_http.use_ssl = true
+        det_http.open_timeout = 10
+        det_http.read_timeout = 15
+        
+        det_request = Net::HTTP::Get.new(det_uri.request_uri)
+        det_request['User-Agent'] = 'Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/117.0'
+        
+        det_response = det_http.request(det_request)
+        
+        if det_response.code.to_i == 200
+          det = JSON.parse(det_response.body)
+          
+          if type == 'tv'
+            start_date = det['first_air_date'].to_s
+            end_date = det['last_air_date'].to_s
+            seasons = det['number_of_seasons']
+            episodes = det['number_of_episodes']
+          else
+            start_date = det['release_date'].to_s
+            end_date = ''
+            seasons = nil
+            episodes = nil
+          end
+          
+          popularity = det['popularity'].to_f
+        else
+          File.open("/tmp/imdb_tmdb_debug.log", "a") do |f|
+            f.puts "[#{Time.now.iso8601}] Details API returned #{det_response.code} for #{imdb_id}"
+          end
+        end
+        
+      rescue Net::TimeoutError, Net::ReadTimeout, Net::OpenTimeout => timeout_ex
+        File.open("/tmp/imdb_tmdb_debug.log", "a") do |f|
+          f.puts "[#{Time.now.iso8601}] Details fetch timeout for #{imdb_id}: #{timeout_ex.class}"
+        end
+      rescue => details_ex
+        File.open("/tmp/imdb_tmdb_debug.log", "a") do |f|
+          f.puts "[#{Time.now.iso8601}] Details fetch error for #{imdb_id}: #{details_ex.message}"
+        end
+      end
+      
+      {
+        providers: providers,
+        start_date: start_date,
+        end_date: end_date,
+        popularity: popularity,
+        seasons: seasons,
+        episodes: episodes,
+        error: :none
+      }
+      
+    rescue Net::TimeoutError, Net::ReadTimeout, Net::OpenTimeout => timeout_ex
+      File.open("/tmp/imdb_tmdb_debug.log", "a") do |f|
+        f.puts "[#{Time.now.iso8601}] TMDb timeout for #{imdb_id}: #{timeout_ex.class}"
+      end
+      { providers: [], start_date:'', end_date:'', popularity:0.0, seasons:nil, episodes:nil, error: :timeout }
+    rescue => ex
+      File.open("/tmp/imdb_tmdb_debug.log", "a") do |f|
+        f.puts "[#{Time.now.iso8601}] TMDb error for #{imdb_id}: #{ex.class} - #{ex.message}"
+        f.puts ex.backtrace.first(3).join("\n") if ex.backtrace
+      end
+      { providers: [], start_date:'', end_date:'', popularity:0.0, seasons:nil, episodes:nil, error: :fetch_error }
+    end
+  end
+
+  def download_poster(tconst, cache) #{{{2
+    url = fetch_imdb_poster_url(tconst)
+    return unless url
+    
+    dest = File.join(cache, "#{tconst}.jpg")
+    return if File.exist?(dest) && File.size(dest) > 1000
+    
+    cmd = [
+      'curl', '-sfL', '--max-time', '10', '--retry', '2', '--retry-delay', '1',
+      '-H', 'User-Agent: Mozilla/5.0', '-o', dest, url
+    ].map { |arg| Shellwords.escape(arg) }.join(' ')
+    
+    system(cmd, err: File::NULL)
+  end
+
+  def fetch_imdb_poster_url(tconst) #{{{2
+    begin
+      html = URI.open(
+        "https://www.imdb.com/title/#{tconst}/",
+        "User-Agent"      => "Mozilla/5.0",
+        "Accept-Encoding" => "identity"
+      ).read
+    rescue SocketError, Errno::ECONNREFUSED, OpenURI::HTTPError, Net::HTTPBadResponse
+      return nil
+    end
+    html[/<meta property="og:image" content="([^"]+)"/,1]
   rescue
-    w_b("Error showing image")
+    nil
   end
-end
 
-# BOTTOM WINDOW FUNCTIONS 
-def w_b(info) # SHOW INFO IN @W_B
-  @w_b.clr
-  info      = "Use TAB to cycle through windows. Press ? for help. " if info == nil
-  info      = info[1..(@w_b.maxx - 3)] + "…" if info.length + 3 > @w_b.maxx 
-  info     += " " * (@w_b.maxx - info.length) if info.length < @w_b.maxx
-  @w_b.p(info)
-  @w_b.update = false
-end
-def w_b_getstr(pretext, text) # A SIMPLE READLINE-LIKE ROUTINE
-  Curses.curs_set(1)
-  Curses.echo
-  stk = 0
-  pos = text.length
-  chr = ""
-  while chr != "ENTER"
-    @w_b.setpos(0,0)
-    @w_b.p(pretext + text)
-    @w_b.nl
-    @w_b.setpos(0,pretext.length + pos)
-    @w_b.refresh
-    chr = getchr
-    case chr
-    when 'C-C', 'C-G'
-      return ""
-    when 'RIGHT'
-      pos += 1 unless pos > text.length
-    when 'LEFT'
-      pos -= 1 unless pos == 0
-    when 'HOME'
-      pos = 0
-    when 'END'
-      pos = text.length
-    when 'DEL'
-      text[pos] = ""
-    when 'BACK'
-      unless pos == 0
-        pos -= 1
-        text[pos] = ""
+  def start_background_fetch #{{{2
+    @cancel_scrape = Concurrent::AtomicBoolean.new(false)
+    @fetching      = true
+    @ui_update_queue = Queue.new
+
+    Thread.new do
+      cache   = cache_dir
+      entries = @movies + @series
+      @bg_total.value   = entries.size
+      @bg_fetched.value = 0
+
+      @ui_update_queue << :initial_progress
+      save_current_state
+
+      entries.each do |entry|
+        break if @cancel_scrape.value
+
+        begin
+          fetch_details(entry[:id])
+          download_poster(entry[:id], cache)
+          @bg_fetched.increment
+
+          if (@bg_fetched.value % 5).zero? || @bg_fetched.value == @bg_total.value
+            @ui_update_queue << :update_progress
+          end
+
+          if (@bg_fetched.value % 25).zero?
+            @ui_update_queue << :rebuild_and_draw
+          end
+
+          if (@bg_fetched.value % 50).zero?
+            save_current_state
+          end
+
+          sleep(0.1) unless @cancel_scrape.value
+
+        rescue => ex
+          File.open("/tmp/imdb_fetch_errors.log", "a") do |f|
+            f.puts "[#{Time.now.iso8601}] Failed to fetch #{entry[:id]}: #{ex.message}"
+          end
+        end
       end
-    when 'LDEL'
-      text = ""
-      pos = 0
-    when /^.$/
-      text.insert(pos,chr)
-      pos += 1
+
+      save_current_state
+      @ui_update_queue << :fetch_complete
+      
+      # Auto-start verification after full fetch
+      sleep(2) # Brief pause before verification
+      @ui_update_queue << :auto_start_verification
+      @fetching = false
+    rescue => ex
+      File.open("/tmp/imdb_bg_error.log","a") do |f|
+        f.puts "[#{Time.now.iso8601}] BG thread error: #{ex.class}: #{ex.message}"
+        f.puts ex.backtrace
+      end
+      @fetching = false
     end
   end
-  Curses.curs_set(0)
-  Curses.noecho
-  return text
-end
 
-# BEFORE WE START
-begin
-  if File.exist?(Dir.home+'/.imdb.conf')
-    load(Dir.home+'/.imdb.conf')
-  else
-    firstrun
-  end
-  if File.exist?(Dir.home+'/.imdb')
-    load(Dir.home+'/.imdb')
-  else
-    puts "Loading IMDB data... (this may take som time, go get some coffee)"
-    loadimdb
-    saveimdb
-  end
-  ## Curses setup 
-  Curses.init_screen
-  Curses.start_color
-  Curses.curs_set(0)
-  Curses.noecho
-  Curses.cbreak
-  Curses.stdscr.keypad = true
-end
-
-# MAIN PROGRAM 
-loop do # OUTER LOOP - (catching refreshes via 'r')
-  @break = false # Initialize @break variable (set if user hits 'r')
-  begin # Create the windows/panels 
-    maxx = Curses.cols
-    maxy = Curses.lines
-    init_pair(255, 0, 234)
-    maxy.times {Curses.stdscr.attron(color_pair(255)) {Curses.stdscr << " " * maxx}}
-    Curses.stdscr.refresh
-    # Curses::Window.new(       h,        w,        y,        x   )
-    @w_t = Curses::Window.new( 1,        maxx,     0,           0 )
-    @w_i = Curses::Window.new( maxy-2,   40,       1,           0 )
-    @w_g = Curses::Window.new( maxy-2,   20,       1,          41 )
-    @w_m = Curses::Window.new( maxy/2-1, 40,       1,          62 )
-    @w_n = Curses::Window.new( maxy/2-1, 40,       maxy/2+1,   62 )
-    @w_d = Curses::Window.new( maxy/2-1, maxx-103, 1,         103 )
-    @w_p = Curses::Window.new( maxy/2-1, maxx-103, maxy/2+1,  103 )
-    @w_b = Curses::Window.new( 1,        maxx,     maxy-1,      0 )
-    @w_i.fg, @w_i.bg = Wifg, WIbg
-    @w_g.fg, @w_g.bg = Wgfg, WIbg
-    @w_m.fg, @w_m.bg = Wmfg, WIbg
-    @w_n.fg, @w_n.bg = Wnfg, WIbg
-    @w_d.fg, @w_d.bg = Wdfg, WIbg
-    @w_p.fg, @w_p.bg = Wpfg, WIbg
-    @w_b.fg, @w_b.bg = Wbfg, Wbbg
-    [@w_i, @w_g, @w_m, @w_n].each{|w| w.index = 0}
-    @w_g.list   = @genres
-    @w_b.update = true
-    @w_d.update = true
-    @active     = @w_i
-    loop do # INNER, CORE LOOP 
-      if @movies
-        imdbmovies
-        @w_t.fg   = WtMfg
-        @search == '' ? @w_t.bg = WtMbg : @w_t.bg = WtMbgS
-        @w_t.attr = Curses::A_BOLD
-      else 
-        imdbseries
-        @w_t.fg   = WtSfg
-        @search == '' ? @w_t.bg = WtSbg : @w_t.bg = WtSbgS
-        @w_t.attr = Curses::A_BOLD
+  def start_additional_lists_fetch #{{{2
+    return if @fetching
+    @cancel_scrape = Concurrent::AtomicBoolean.new(false)
+    @fetching      = true
+    @ui_update_queue = Queue.new
+    
+    Thread.new do
+      begin
+        @ui_update_queue << :start_additional_fetch
+        
+        ua = "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/117.0"
+        
+        # Track initial counts
+        initial_movie_count = @movies.size
+        initial_series_count = @series.size
+        
+        # Fetch popular movies
+        @ui_update_queue << :fetching_popular_movies
+        popular_movies = scrape_json_ld('chart/moviemeter', ua).take(100)
+        
+        # Add popular movies (avoid duplicates)
+        new_movies_added = 0
+        popular_movies.each do |movie|
+          break if @cancel_scrape.value
+          unless @movies.any? { |m| m[:id] == movie[:id] }
+            @movies << movie
+            new_movies_added += 1
+          end
+        end
+        
+        # Fetch popular series
+        @ui_update_queue << :fetching_popular_series
+        popular_series = scrape_json_ld('chart/tvmeter', ua).take(100)
+        
+        # Add popular series (avoid duplicates)
+        new_series_added = 0
+        popular_series.each do |series|
+          break if @cancel_scrape.value
+          unless @series.any? { |s| s[:id] == series[:id] }
+            @series << series
+            new_series_added += 1
+          end
+        end
+        
+        # Fetch trending content
+        @ui_update_queue << :fetching_trending
+        trending_content = []
+        ['trending/movie', 'trending/tv'].each do |path|
+          break if @cancel_scrape.value
+          begin
+            trending_content += scrape_trending(path, ua).take(50)
+          rescue => e
+            # Continue if one fails
+          end
+        end
+        
+        # Add trending content (classify and avoid duplicates)
+        trending_movies_added = 0
+        trending_series_added = 0
+        trending_content.each do |item|
+          break if @cancel_scrape.value
+          
+          if item[:type] && item[:type].include?('Series')
+            unless @series.any? { |s| s[:id] == item[:id] }
+              @series << item
+              trending_series_added += 1
+            end
+          else
+            unless @movies.any? { |m| m[:id] == item[:id] }
+              @movies << item
+              trending_movies_added += 1
+            end
+          end
+        end
+        
+        # Save state and start background detail fetching
+        unless @cancel_scrape.value
+          save_current_state
+          @ui_update_queue << :rebuild_and_refresh
+          
+          total_new_movies = new_movies_added + trending_movies_added
+          total_new_series = new_series_added + trending_series_added
+          
+          # Start fetching details for new items
+          new_items = []
+          @movies.last(total_new_movies).each { |m| new_items << m }
+          @series.last(total_new_series).each { |s| new_items << s }
+          
+          if new_items.any?
+            @ui_update_queue << [:start_detail_fetch, total_new_movies, total_new_series, new_items.size]
+            
+            # Set up progress tracking
+            @bg_total.value = new_items.size
+            @bg_fetched.value = 0
+            cache = cache_dir
+            
+            # Fetch details for each new item
+            new_items.each_with_index do |item, idx|
+              break if @cancel_scrape.value
+              
+              begin
+                fetch_details(item[:id])
+                download_poster(item[:id], cache)
+                @bg_fetched.increment
+                
+                if ((@bg_fetched.value % 5).zero?) || (@bg_fetched.value == @bg_total.value)
+                  @ui_update_queue << :update_additional_progress
+                end
+                
+                if ((@bg_fetched.value % 10).zero?)
+                  save_current_state
+                  @ui_update_queue << :rebuild_and_refresh
+                end
+                
+                sleep(0.1) unless @cancel_scrape.value
+                
+              rescue => ex
+                # Log error but continue with other items
+                File.open("/tmp/imdb_fetch_errors.log", "a") do |f|
+                  f.puts "[#{Time.now.iso8601}] Failed to fetch additional item #{item[:id]}: #{ex.message}"
+                end
+              end
+            end
+            
+            # Final save and completion
+            save_current_state
+            @ui_update_queue << :rebuild_and_refresh
+          end
+          
+          @ui_update_queue << [:additional_fetch_complete, total_new_movies, total_new_series]
+          
+          # Auto-start verification after additional list fetching
+          if total_new_movies > 0 || total_new_series > 0
+            sleep(2) # Brief pause before verification
+            @ui_update_queue << :auto_start_verification
+          end
+        end
+        
+      rescue => ex
+        @ui_update_queue << [:additional_fetch_error, ex.message]
+      ensure
+        @fetching = false
       end
-      @w_i.fill; @w_g.fill; @w_m.fill; @w_n.fill; @w_p.fill
-      w_t; w_list(@w_i); w_list(@w_g); w_list(@w_m); w_list(@w_n)
-      if @w_d.update
-        @w_d.fill
-        w_d
-      end
-      imageshow("") if @w_d.update
-      @w_d.update = true
-      w_b(nil) if @w_b.update
-      @w_b.update = true
-      getkey              # Get key from user
-      break if @break     # Break to outer loop, redrawing windows, if user hit 'r'
-      break if Curses.cols != maxx or Curses.lines != maxy # break on terminal resize 
     end
-  ensure # On exit: clear image, close curses 
-    imageshow("")
-    close_screen
   end
-end
 
-# vim: set sw=2 sts=2 et fdm=syntax fdn=2 fcs=fold\:\ :
+  def start_verification_check #{{{2
+    return if @fetching
+    @cancel_scrape = Concurrent::AtomicBoolean.new(false)
+    @fetching      = true
+    @ui_update_queue = Queue.new
+    
+    Thread.new do
+      begin
+        cache = cache_dir
+        all_items = @movies + @series
+        @ui_update_queue << [:start_verification, all_items.size]
+        
+        # Check for missing or incomplete data
+        missing_details = []
+        missing_posters = []
+        incomplete_data = []
+        
+        all_items.each_with_index do |item, idx|
+          break if @cancel_scrape.value
+          
+          # Check details
+          details = @details_cache[item[:id]]
+          if details.nil? || details[:title].to_s.empty? || details[:error]
+            missing_details << item
+          elsif details[:rating] == 0.0 || details[:genres].nil? || details[:genres].empty?
+            incomplete_data << item
+          end
+          
+          # Check poster
+          poster_file = File.join(cache, "#{item[:id]}.jpg")
+          if !File.exist?(poster_file) || File.size(poster_file) < 1000
+            missing_posters << item
+          end
+          
+          if (idx % 50).zero?
+            @ui_update_queue << [:verification_progress, idx + 1, all_items.size]
+          end
+        end
+        
+        # Report findings
+        total_issues = missing_details.size + missing_posters.size + incomplete_data.size
+        
+        if total_issues == 0
+          @ui_update_queue << [:verification_complete, 0, 0, 0, 0]
+        else
+          @ui_update_queue << [:verification_issues_found, missing_details.size, missing_posters.size, incomplete_data.size, total_issues]
+          
+          # Ask user if they want to fix issues
+          @ui_update_queue << :verification_ask_fix
+          
+          # Give UI time to display the message before continuing
+          sleep(1)
+          
+          # Auto-fix common issues
+          items_to_fix = (missing_details + incomplete_data).uniq { |item| item[:id] }
+          
+          if items_to_fix.any?
+            @ui_update_queue << [:start_fixing, items_to_fix.size]
+            
+            items_to_fix.each_with_index do |item, idx|
+              break if @cancel_scrape.value
+              
+              begin
+                # Remove old details to force fresh fetch
+                @details_cache.delete(item[:id])
+                
+                # Fetch fresh details
+                new_details = fetch_details(item[:id])
+                
+                # Update rating in main arrays
+                movie_item = @movies.find { |m| m[:id] == item[:id] }
+                series_item = @series.find { |s| s[:id] == item[:id] }
+                
+                if movie_item && new_details[:rating] && new_details[:rating] > 0
+                  movie_item[:rating] = new_details[:rating]
+                elsif series_item && new_details[:rating] && new_details[:rating] > 0
+                  series_item[:rating] = new_details[:rating]
+                end
+                
+                # Download poster if missing
+                if missing_posters.include?(item)
+                  download_poster(item[:id], cache)
+                end
+                
+                if (idx % 5).zero? || (idx + 1) == items_to_fix.size
+                  @ui_update_queue << [:fix_progress, idx + 1, items_to_fix.size]
+                end
+                
+                if (idx % 25).zero?
+                  save_current_state
+                end
+                
+                sleep(0.1) unless @cancel_scrape.value
+                
+              rescue => ex
+                File.open("/tmp/imdb_verification_errors.log", "a") do |f|
+                  f.puts "[#{Time.now.iso8601}] Failed to fix #{item[:id]}: #{ex.message}"
+                end
+              end
+            end
+            
+            save_current_state
+            build_genre_list
+            rebuild_index
+          end
+          
+          @ui_update_queue << [:verification_fix_complete, items_to_fix.size]
+        end
+        
+      rescue => ex
+        @ui_update_queue << [:verification_error, ex.message]
+      ensure
+        @fetching = false
+      end
+    end
+  end
+
+  def start_incremental_update #{{{2
+    return if @fetching
+    @cancel_scrape = Concurrent::AtomicBoolean.new(false)
+    @fetching      = true
+    
+    Thread.new do
+      cache = cache_dir
+      all_items = @movies + @series
+      missing_items = []
+
+      all_items.each do |item|
+        needs_fetch = false
+        details = @details_cache[item[:id]]
+        if details.nil? || details[:title].to_s.empty? || details[:error]
+          needs_fetch = true
+        end
+
+        poster_file = File.join(cache, "#{item[:id]}.jpg")
+        if !File.exist?(poster_file) || File.size(poster_file) < 1000
+          needs_fetch = true
+        end
+
+        missing_items << item if needs_fetch
+      end
+
+      if missing_items.empty?
+        @progress.say("✓ All items already have details and posters")
+        @fetching = false
+        sleep 1.5
+        return
+      end
+
+      @progress.say("Incremental: fetching #{missing_items.size} missing details/posters…")
+
+      missing_items.each_with_index do |item, idx|
+        break if @cancel_scrape.value
+
+        begin
+          fetch_details(item[:id])
+          download_poster(item[:id], cache)
+
+          if ((idx + 1) % 10).zero? || (idx + 1) == missing_items.size
+            @progress.say("Incremental: fetched #{idx + 1}/#{missing_items.size}… (press 'c' to stop)")
+          end
+
+          sleep(0.1) unless @cancel_scrape.value
+        rescue => ex
+          File.open("/tmp/imdb_fetch_errors.log", "a") do |f|
+            f.puts "[#{Time.now.iso8601}] Incremental fetch failed for #{item[:id]}: #{ex.message}"
+          end
+        end
+
+        if ((idx + 1) % 25).zero?
+          save_current_state
+        end
+      end
+
+      save_current_state
+      @progress.say("✓ Incremental update complete")
+      @fetching = false
+      sleep 1.5
+    rescue => ex
+      File.open("/tmp/imdb_bg_error.log","a"){|f| f.puts ex.full_message}
+      @fetching = false
+    end
+  end
+
+  def search_imdb(query, max = 5) #{{{2
+    uri = URI("https://www.imdb.com/find")
+    uri.query = URI.encode_www_form(q: query, s: 'tt')
+    html = nil
+    begin
+      Timeout.timeout(5) do
+        html = URI.open(uri.to_s,
+                        'User-Agent'      => 'Mozilla/5.0',
+                        'Accept'          => 'text/html,application/xhtml+xml',
+                        'Accept-Language' => 'en-US,en;q=0.9',
+                        'Accept-Encoding' => 'identity'
+                      ).read
+        # Fix encoding issues
+        html = html.force_encoding('UTF-8').scrub('?')
+      end
+    rescue Timeout::Error, Net::ReadTimeout, SocketError, Errno::ECONNREFUSED, OpenURI::HTTPError, Net::HTTPBadResponse, Encoding::CompatibilityError => e
+      @footer.say(" ✗ Network error: #{e.class.name}")
+      sleep(1)
+      return []
+    end
+    doc = Nokogiri::HTML(html)
+    nd = doc.at_css('script#__NEXT_DATA__')&.text
+    return [] unless nd
+    payload = JSON.parse(nd) rescue {}
+    results = payload.dig('props','pageProps','titleResults','results') || []
+    results.first(max).map do |r|
+      # Use available data from search results
+      type_info = r['titleTypeText'] || ""
+      
+      # Get cast info or other available info as description
+      cast = r['topCredits'] || []
+      if !cast.empty?
+        desc = "Cast: #{cast.first(3).join(', ')}"
+      elsif r['titlePosterImageModel'] && r['titlePosterImageModel']['caption']
+        # Extract cast from poster caption as fallback
+        caption = r['titlePosterImageModel']['caption']
+        if caption.include?(' in ')
+          cast_part = caption.split(' in ').first
+          desc = "Cast: #{cast_part}" if cast_part.length < 50
+        else
+          desc = ""
+        end
+      else
+        desc = ""
+      end
+      
+      # Check if already in our library
+      already_have = (@movies + @series).any? { |entry| entry[:id] == r['id'] }
+      
+      {
+        id:    r['id'],
+        title: "#{r['titleNameText']} (#{r['titleReleaseText']})".to_s.clean_ansi,
+        description: desc.clean_ansi,
+        type: type_info,
+        already_have: already_have
+      }
+    end
+  end
+
+  # HELP SYSTEM {{{1
+  def show_help(mode = :general) #{{{2
+    @help_mode = mode
+    @help.clear
+    
+    case mode
+    when :general
+      @help.text = build_general_help
+    when :regions
+      @help.text = build_regions_help
+    when :search
+      @search_selection_index = 0
+      @search_content_scroll = 0
+      @help.text = build_search_help(@search_results || [], @search_query || "")
+      update_search_display
+    when :preview
+      @help.text = build_preview_help(@preview_item || {})
+      @help.ix = 0
+    end
+    
+    @help.ix = 0
+    @help.index = 0
+    @help.refresh
+  end
+
+  def build_general_help #{{{2
+    help_text = +"IMDb Top Movies & Series Browser - Help\n".b
+    help_text << "=" * (@help.w - 4) << "\n\n"
+    
+    help_text << "NAVIGATION:\n".b
+    help_text << "  Tab           Switch between panes (List/Genres/Wish/Dump)\n"
+    help_text << "  ↑/↓ Arrows    Navigate within current pane\n"
+    help_text << "  PgUp/PgDn     Page up/down in current pane\n"
+    help_text << "  Home/End      Jump to first/last item\n\n"
+    
+    help_text << "MAIN ACTIONS:\n".b
+    help_text << "  +             Add item to Wish List (or toggle + filter in Genres)\n"
+    help_text << "  -             Add item to Dump List (or toggle - filter in Genres)\n"
+    help_text << "  ENTER         Refresh screen\n"
+    help_text << "  q/Q           Quit application\n\n"
+    
+    help_text << "FILTERING:\n".b
+    help_text << "  r             Set minimum rating threshold\n"
+    help_text << "  l             Toggle between Movies and Series view\n"
+    help_text << "  o             Toggle sort order (Rating/Alphabetical)\n"
+    help_text << "  y/Y           Set year filters (min/max)\n\n"
+    
+    help_text << "TMDB SETTINGS:\n".b
+    help_text << "  k             Set TMDb API key\n"
+    help_text << "  R             Select region for streaming providers\n\n"
+    
+    help_text << "DATA MANAGEMENT:\n".b
+    help_text << "  I             Full fetch (scrape and download all)\n"
+    help_text << "  i             Refresh cache (incremental update)\n"
+    help_text << "  f             Re-fetch current item details\n"
+    help_text << "  v             Verify data integrity (check for missing/incomplete data)\n"
+    help_text << "  L             Load additional lists (popular + trending)\n"
+    help_text << "  D             Remove duplicate entries\n"
+    help_text << "  /             Search IMDb\n\n"
+    
+    help_text << "HELP:\n".b
+    help_text << "  ?             Show this help (press again to cycle modes)\n"
+    help_text << "  ESC/ENTER     Close help window\n\n"
+    
+    help_text << "GENRE FILTERING:\n".b
+    help_text << "  When in Genres pane:\n"
+    help_text << "    +           Include genre (green +)\n"
+    help_text << "    -           Exclude genre (red -)\n"
+    help_text << "    Space       Clear genre filter\n\n"
+    
+    help_text << "PANE DESCRIPTIONS:\n".b
+    help_text << "  List          Main movie/series list (filtered results)\n"
+    help_text << "  Genres        Available genres with +/- filters\n"
+    help_text << "  Wish List     Items you want to watch\n"
+    help_text << "  Dump List     Items you want to hide\n"
+    help_text << "  Detail        Information about selected item\n\n"
+    
+    help_text << "TIPS:\n".b.fg(230)
+    help_text << "  • Use genre filters to find specific types of content\n".fg(230)
+    help_text << "  • Dump list removes items from main view permanently\n".fg(230)
+    help_text << "  • TMDb provides streaming provider information\n".fg(230)
+    help_text << "  • Posters are displayed in the terminal using w3mimgdisplay\n".fg(230)
+    
+    help_text
+  end
+
+  def build_search_help(results, query) #{{{2
+    # Build fixed header (like @wish pane does)
+    header = +"IMDb Search Results for: #{query}\n".b
+    header << "TAB/S-TAB=Select ENTER=Preview ESC=Cancel /=New\n".fg(248)
+    header << "─" * @help.w << "\n"  # Full width
+    
+    # Build scrollable content
+    content_lines = []
+    if results.empty?
+      content_lines << "No results found.\n".fg(130)
+      content_lines << "Try different keywords or check spelling."
+    else
+      results.each_with_index do |result, i|
+        mark = i == (@search_selection_index || 0) ? "➤ " : "  "
+        
+        # Dim/mark items already in library
+        if result[:already_have]
+          title_line = "#{mark}#{result[:title]} ✓ ALREADY IN LIBRARY".fg(240)
+          content_lines << title_line
+        else
+          content_lines << "#{mark}#{result[:title]}"
+        end
+        
+        # Build info line
+        info_parts = []
+        info_parts << "ID: #{result[:id]}"
+        info_parts << "Type: #{result[:type]}" unless result[:type].empty?
+        
+        if result[:already_have]
+          content_lines << "    #{info_parts.join('  ')}".fg(240)
+        else
+          content_lines << "    #{info_parts.join('  ')}".fg(248)
+        end
+        
+        # Show cast info if available
+        if result[:description] && !result[:description].empty?
+          if result[:already_have]
+            content_lines << "    #{result[:description]}".fg(240)
+          else
+            content_lines << "    #{result[:description]}".fg(230)
+          end
+        end
+        
+        content_lines << ""  # blank line
+      end
+    end
+    
+    # Store content separately for scrolling
+    @search_content_lines = content_lines
+    
+    # Return complete text with header + content
+    header + content_lines.join("\n")
+  end
+
+  def build_preview_help(item) #{{{2
+    # Header with navigation
+    help_text = +"Preview: #{item[:title] || 'Loading...'}\n".b
+    help_text << "ENTER=Add to Library ESC=Back to Search\n".fg(248)
+    help_text << "─" * @help.w << "\n"  # Full width
+    
+    if @preview_details
+      d = @preview_details
+      help_text << "\n"
+      help_text << "Rating:     #{d[:rating]} (#{d[:votes] || 0} votes)\n".b
+      help_text << "Type:       #{d[:type] || item[:type]}\n"
+      help_text << "Released:   #{d[:release_date] || d[:start_date]}\n"
+      help_text << "Runtime:    #{d[:duration]}\n" unless d[:duration].to_s.empty?
+      
+      if d[:type] == 'TVSeries'
+        help_text << "Seasons:    #{d[:seasons]} (#{d[:episodes]} episodes)\n"
+        help_text << "Years:      #{d[:start_date]} – #{d[:end_date]}\n"
+      end
+      
+      help_text << "Genres:     #{(d[:genres] || []).join(', ')}\n"
+      help_text << "Director:   #{(d[:directors] || []).join(', ')}\n"
+      help_text << "Cast:       #{(d[:actors] || []).take(5).join(', ')}\n"
+      help_text << "Rated:      #{d[:content_rating]}\n" unless d[:content_rating].to_s.empty?
+      
+      if @tmdb_key && !@tmdb_key.strip.empty?
+        providers = Array(d[:providers])
+        where_text = providers.empty? ? "(not available in #{@tmdb_region})" : providers.join(', ')
+        help_text << "\nStreaming:  #{where_text}\n".i
+        help_text << "Popularity: #{sprintf('%.1f', d[:popularity] || 0)}\n".i
+      end
+      
+      help_text << "\nSummary:\n".b
+      help_text << "#{d[:summary] || 'No summary available.'}\n".fg(230)
+    else
+      help_text << "\nFetching detailed information...\n".fg(248)
+      help_text << "Please wait...\n".fg(248)
+    end
+    
+    help_text
+  end
+
+  def build_regions_help #{{{2
+    help_text = +"TMDb Streaming Provider Regions\n".b
+    help_text << "=" * (@help.w - 4) << "\n\n"
+    
+    help_text << "POPULAR REGIONS:\n".b
+    popular_regions = [
+      ['US', 'United States'], ['GB', 'United Kingdom'], ['CA', 'Canada'],
+      ['AU', 'Australia'], ['DE', 'Germany'], ['FR', 'France'],
+      ['ES', 'Spain'], ['IT', 'Italy'], ['NL', 'Netherlands'],
+      ['SE', 'Sweden'], ['NO', 'Norway'], ['DK', 'Denmark'],
+      ['JP', 'Japan'], ['KR', 'South Korea'], ['IN', 'India'],
+      ['BR', 'Brazil'], ['MX', 'Mexico']
+    ]
+    
+    popular_regions.each do |code, name|
+      help_text << "  #{code.ljust(3)} #{name}\n"
+    end
+    
+    help_text << "\nEUROPE:\n".b
+    europe = [
+      ['AT', 'Austria'], ['BE', 'Belgium'], ['CH', 'Switzerland'],
+      ['CZ', 'Czech Republic'], ['FI', 'Finland'], ['GR', 'Greece'],
+      ['HU', 'Hungary'], ['IE', 'Ireland'], ['PL', 'Poland'],
+      ['PT', 'Portugal'], ['RO', 'Romania']
+    ]
+    
+    europe.each do |code, name|
+      help_text << "  #{code.ljust(3)} #{name}\n"
+    end
+    
+    help_text << "\nASIA-PACIFIC:\n".b
+    asia_pacific = [
+      ['SG', 'Singapore'], ['MY', 'Malaysia'], ['TH', 'Thailand'],
+      ['ID', 'Indonesia'], ['PH', 'Philippines'], ['TW', 'Taiwan'],
+      ['HK', 'Hong Kong'], ['NZ', 'New Zealand']
+    ]
+    
+    asia_pacific.each do |code, name|
+      help_text << "  #{code.ljust(3)} #{name}\n"
+    end
+    
+    help_text << "\nAMERICAS:\n".b
+    americas = [
+      ['AR', 'Argentina'], ['CL', 'Chile'], ['CO', 'Colombia'],
+      ['PE', 'Peru'], ['UY', 'Uruguay'], ['VE', 'Venezuela']
+    ]
+    
+    americas.each do |code, name|
+      help_text << "  #{code.ljust(3)} #{name}\n"
+    end
+    
+    help_text << "\nUSAGE:\n".b
+    help_text << "  1. Press 'R' to change region\n"
+    help_text << "  2. Enter a 2-letter country code\n"
+    help_text << "  3. Or press '?' to see this list\n"
+    help_text << "  4. Press Enter to confirm\n\n"
+    
+    help_text << "NOTE:\n".b.fg(230)
+    help_text << "  Different regions have different streaming services.\n".fg(230)
+    help_text << "  Some content may not be available in all regions.\n".fg(230)
+    
+    help_text
+  end
+
+  def scroll_to_search_selection #{{{2
+    return unless @help_mode == :search && @search_results && !@search_results.empty?
+    
+    # Calculate lines per result dynamically based on content
+    lines_per_result = 4  # title + ID/type + description + blank
+    
+    # Available height for content
+    content_height = @help.h - 5  # header(3) + border(2)
+    
+    # Center the selected item
+    selected_content_line = @search_selection_index * lines_per_result
+    center_top = selected_content_line - content_height / 2
+    center_top = 0 if center_top < 0
+    
+    # Don't scroll past the end
+    max_scroll = [@search_content_lines.size - content_height, 0].max
+    center_top = max_scroll if center_top > max_scroll
+    
+    # Set scroll to content area only
+    @search_content_scroll = center_top
+    update_search_display
+  end
+
+  def update_search_display #{{{2
+    return unless @help_mode == :search
+    
+    # Rebuild complete text with fixed header + scrolled content
+    header = +"IMDb Search Results for: #{@search_query}\n".b
+    header << "TAB/S-TAB=Select ENTER=Preview ESC=Cancel /=New\n".fg(248)
+    header << "─" * @help.w << "\n"  # Full width
+    
+    # Get visible content lines based on scroll position
+    content_height = @help.h - 5  # header(3) + border(2)
+    scroll_pos = @search_content_scroll || 0
+    visible_content = @search_content_lines[scroll_pos, content_height] || []
+    
+    @help.text = header + visible_content.join("\n")
+    @help.ix = 0  # Never scroll the combined text
+    @help.refresh
+  end
+
+  def update_help #{{{2
+    return if @help_mode == :hidden
+    
+    if @help_mode == :search
+      update_search_display
+      return
+    elsif @help_mode == :preview
+      # Preview mode uses normal scrolling
+      @help.ix = 0  # Keep at top
+      @help.refresh
+      return
+    end
+    
+    lines = @help.text.split("\n")
+    visible_lines = @help.h - 2  # Account for border
+    
+    # Handle scrolling
+    if lines.size > visible_lines
+      top = @help.ix
+      max_top = [lines.size - visible_lines, 0].max
+      @help.ix = [[top, 0].max, max_top].min
+    else
+      @help.ix = 0
+    end
+    
+    @help.refresh
+  end
+
+  def hide_help #{{{2
+    @help_mode = :hidden
+    Rcurses.clear_screen
+    [@header, @list, @genres, @wish, @dump, @detail, @footer].each(&:full_refresh)
+    @last_poster_id = nil
+    draw_all  # Refresh all panes to overwrite help
+  end
+
+  # DISPLAY FUNCTIONS {{{1
+  def draw_all #{{{2
+    refresh_layout
+    update_header; update_list; update_genres; update_wish; update_dump; update_detail; update_footer
+    
+    # Draw help overlay if visible
+    if @help_mode != :hidden
+      update_help
+    end
+  end
+
+  def update_header #{{{2
+    _, cols = IO.console.winsize
+    shown = (@index_list || []).size
+    actual_total = @show_movies ? @movies.size : @series.size
+    if @show_movies
+      @header.bg = 202
+      type = 'Movies'
+    else
+      @header.bg = 23
+      type = 'Series'
+    end
+    hdr = format(" IMDb Top %-6s (%d/%d)  Rating ≥%.1f", type, shown, actual_total, @rating_threshold)
+    if @year_min || @year_max
+      year_str = " Years: "
+      year_str += @year_min ? @year_min.to_s : "∞"
+      year_str += "-"
+      year_str += @year_max ? @year_max.to_s : "∞"
+      hdr += year_str
+    end
+    hdr += "  Sort: #{@sort_by.upcase} "
+    if @tmdb_key && !@tmdb_key.strip.empty?
+      hdr += " Region: #{@tmdb_region}"
+    end
+    @header.clear
+    @header.say(hdr.ljust(cols))
+    @header.refresh
+  end
+
+  def get_current_list_items #{{{2
+    if @index_list.empty?
+      list = []
+      list += @movies if @show_movies
+      list += @series if @show_series
+      list
+    else
+      @index_list
+    end
+  end
+
+  def update_list #{{{2
+    items = get_current_list_items
+
+    lines = items.map.with_index do |e,i|
+      mark = (i == @list.index ? '➤' : ' ')
+      "%s %4.1f  %s" % [mark, e[:rating], e[:title].clean_ansi]
+    end.map{|l| l[0,@list.w]}
+
+    @list.text = lines.join("\n")
+
+    if lines.empty?
+      @list.ix = 0
+    else
+      h = @list.h
+      top = @list.index - h/2
+      top = 0 if top < 0
+      max_top = [lines.size - h, 0].max
+      top = max_top if top > max_top
+      @list.ix = top
+    end
+
+    @list.refresh
+  end
+
+  def update_genres #{{{2
+    build_genre_list
+    @genres.clear
+    @genres_list.each_with_index do |genre, i|
+      mark   = @genre_filters[genre]
+      prefix = (mark == 1 ? '+' : mark == -1 ? '-' : ' ')
+      fg     = (mark == 1 ? 2 : mark == -1 ? 1 : @genres.fg)
+      line   = "#{prefix} #{genre}"[0, @genres.w]
+      if i == @genres.index
+        line[2..] = line[2..].u
+      end
+      @genres.text << line.fg(fg) << "\n"
+    end
+    @genres.ix = [
+      @genres.index - (@genres.h / 2),
+      0
+    ].max
+    max_top = [@genres_list.size - @genres.h, 0].max
+    @genres.ix = max_top if @genres.ix > max_top
+    @genres.refresh
+  end
+
+  def update_wish #{{{2
+    current_wish_list = @show_movies ? @movie_wish_list : @series_wish_list
+    type_name = @show_movies ? "Movie" : "Series"
+
+    lines = current_wish_list.each_with_index.map do |tconst, i|
+      entry = (@movies + @series).find { |e| e[:id] == tconst }
+      title = (entry ? entry[:title] : tconst).to_s.clean_ansi
+      mark  = (i == @wish.index ? '➤ ' : '  ')
+      (mark + title)[0, @wish.w]
+    end
+
+    header = "#{type_name} Wish List"
+    @wish.text = header.b + "\n" + lines.join("\n")
+
+    h       = @wish.h - 1
+    top     = @wish.index - h/2
+    top     = 0 if top < 0
+    max_top = [lines.size - h, 0].max
+    top     = max_top if top > max_top
+    @wish.ix = top
+    @wish.refresh
+  end
+
+  def update_dump #{{{2
+    current_dump_list = @show_movies ? @movie_dump_list : @series_dump_list
+    type_name = @show_movies ? "Movie" : "Series"
+
+    lines = current_dump_list.each_with_index.map do |tconst, i|
+      entry = (@movies + @series).find { |e| e[:id] == tconst }
+      title = (entry ? entry[:title] : tconst).to_s.clean_ansi
+      mark  = (i == @dump.index ? '➤ ' : '  ')
+      (mark + title)[0, @dump.w]
+    end
+
+    header = "#{type_name} Discard List"
+    @dump.text = header.b + "\n" + lines.join("\n")
+
+    h       = @dump.h - 1
+    top     = @dump.index - h/2
+    top     = 0 if top < 0
+    max_top = [lines.size - h, 0].max
+    top     = max_top if top > max_top
+    @dump.ix = top
+    @dump.refresh
+  end
+
+  def update_detail #{{{2
+    entry = nil
+
+    case @focus
+    when @list
+      items = get_current_list_items
+      entry = items[@list.index] if @list.index < items.size
+
+    when @wish
+      current_wish_list = @show_movies ? @movie_wish_list : @series_wish_list
+      if @wish.index < current_wish_list.size
+        tconst = current_wish_list[@wish.index]
+        entry = (@movies + @series).find { |e| e[:id] == tconst }
+      end
+
+    when @dump
+      current_dump_list = @show_movies ? @movie_dump_list : @series_dump_list
+      if @dump.index < current_dump_list.size
+        tconst = current_dump_list[@dump.index]
+        entry = (@movies + @series).find { |e| e[:id] == tconst }
+      end
+
+    when @genres
+      items = get_current_list_items
+      entry = items[@list.index] if @list.index < items.size
+    end
+
+    if entry
+      id = entry[:id]
+      d  = @details_cache[id] || {}
+      providers = Array(d[:providers])
+      
+      where_text = case d[:error]
+                  when :no_key      then "(TMDb: no API key set)"
+                  when :invalid_key then "(TMDb: invalid API key)"
+                  when :fetch_error then "(TMDb: network error)"
+                  when :timeout     then "(TMDb: request timeout)"
+                  when :api_error   then "(TMDb: API error)"
+                  when :not_found   then "(TMDb: not found on TMDb)"
+                  when :none        then providers.empty? ? "(not available in #{@tmdb_region})" : providers.join(', ')
+                  else
+                    if providers.empty?
+                      d[:error] ? "(TMDb: #{d[:error]})" : "(not available in #{@tmdb_region})"
+                    else
+                      providers.join(', ')
+                    end
+                  end
+      
+      pop = (d[:popularity] || 0.0).to_f
+      buf = +"Title:      #{entry[:title]} (#{id})\n".b
+      buf << "Rating:     #{entry[:rating]} (#{d[:votes] || 0} votes)\n"
+      buf << "Released:   #{d[:release_date]}   Country: #{d[:country] || ''}\n"
+      buf << "Genres:     #{(d[:genres]||[]).join(', ')}\n"
+      buf << "Director:   #{(d[:directors]||[]).join(', ')}\n"
+      buf << "Cast:       #{(d[:actors]||[]).take(5).join(', ')}\n"
+      buf << "Rated:      #{d[:content_rating] || ''}\n"
+      buf << "Runtime:    #{d[:duration].to_s || ''}\n"
+      buf << "Years:      #{d[:start_date] || ''} – #{d[:end_date] || ''}\n"
+      buf << "\n#{d[:summary] || ''}\n\n".fg(230)
+      
+      if @tmdb_key && !@tmdb_key.strip.empty?
+        buf << "Streaming in #{@tmdb_region} (TMDb)\n".b.i
+        buf << "Where:      #{where_text}\n".i
+        buf << format("Popularity: %.1f\n", pop).i
+        
+        # Show helpful hint for network issues
+        if d[:error] == :timeout || d[:error] == :fetch_error
+          buf << "(Try 'i' to refresh cache)\n".fg(130).i
+        end
+      else
+        buf << "TMDb Data (no API key)\n".b.i
+        buf << "Set TMDb key with 'k' for streaming info\n".i
+      end
+      
+      if d[:type] == 'TVSeries'
+        buf << "Seasons/Ep: #{d[:seasons] || 0}/#{d[:episodes] || 0}\n".i
+      end
+      @detail.text = buf
+    else
+      @detail.text = "No titles match your filter.\n"
+    end
+    @detail.refresh
+    if entry && entry[:id] != @last_poster_id
+      show_poster(entry[:id])
+      @last_poster_id = entry[:id]
+    end
+  end
+
+  def update_footer #{{{2
+    return if @fetching
+    _, cols = IO.console.winsize
+    cmds = [
+      "Tab=Pane","↑/↓=Scroll", "+/−=Wish/Dump", "r=Rating","y/Y=Year","l=Toggle","o=Sort",
+      "I=FullFetch", "i=Refresh","f=ReFetch","L=MoreLists","D=DeDupe","k=TMDb","R=Region","/=Search","?=Help","q=Quit"
+    ].join("  ")
+    @footer.say(cmds.ljust(cols))
+    @footer.full_refresh
+  end
+
+  def show_poster(tconst) #{{{2
+    w3m = "/usr/lib/w3m/w3mimgdisplay"
+    return unless File.executable?(w3m)
+    cache = cache_dir
+    file  = File.join(cache, "#{tconst}.jpg")
+
+    begin
+      Timeout.timeout(2) do
+        info = `xwininfo -id $(xdotool getactivewindow) 2>/dev/null`
+        return unless info =~ /Width:\s*(\d+).*Height:\s*(\d+)/m
+        term_w, term_h = $1.to_i, $2.to_i
+        rows, cols = IO.console.winsize
+        cw = term_w.to_f / cols
+        ch = term_h.to_f / rows
+        px = ((@detail.x - 1) * cw).to_i
+        py = (25 * ch).to_i
+        max_w = (40 * cw).to_i
+        max_h = ((rows - 28) * ch).to_i
+
+        `echo "6;#{px};#{py};#{max_w+4};#{max_h+4};\n4;\n3;" | #{w3m} 2>/dev/null`
+
+        if File.exist?(file) && File.size?(file) > 0
+          iw, ih = `identify -format "%wx%h" #{file}`.split('x').map(&:to_i)
+
+          if iw > max_w
+            ih = ih * max_w / iw; iw = max_w
+          end
+          if ih > max_h
+            iw = iw * max_h / ih; ih = max_h
+          end
+
+          `echo "0;1;#{px};#{py};#{iw};#{ih};;;;;\"#{file}\"\n4;\n3;" | #{w3m} 2>/dev/null`
+        end
+      end
+    rescue Timeout::Error
+      # skip on hang
+    end
+  end
+
+  # MAIN LOOP {{{1
+  def run_loop #{{{2
+    @last_poster_id = nil
+    draw_all
+    loop do
+      ready = IO.select([STDIN], nil, nil, 0.05)
+      if ready
+        handle_input
+      end
+      if defined?(@ui_update_queue) && @ui_update_queue
+        begin
+          while !@ui_update_queue.empty?
+            update = @ui_update_queue.pop(true)
+            case update
+            when :initial_progress
+              @progress.say("Fetching details & posters for #{@bg_total.value} items... Go grab a coffee! (press 'c' to cancel)")
+            when :update_progress
+              @progress.say("Fetched #{@bg_fetched.value}/#{@bg_total.value} details & posters...   (press 'c' to cancel)")
+            when :rebuild_and_draw
+              build_genre_list
+              rebuild_index
+              draw_all
+            when :fetch_complete
+              @progress.say("✓ All data cached to #{cache_dir}")
+              sleep 1.0
+              @progress.clear
+              update_footer
+              @footer.refresh
+            # Additional lists fetch messages
+            when :start_additional_fetch
+              @progress.say("Loading additional lists... (press 'c' to cancel)")
+            when :fetching_popular_movies
+              @progress.say("Fetching popular movies... (press 'c' to cancel)")
+            when :fetching_popular_series
+              @progress.say("Fetching popular TV series... (press 'c' to cancel)")
+            when :fetching_trending
+              @progress.say("Fetching trending content... (press 'c' to cancel)")
+            when :rebuild_and_refresh
+              build_genre_list
+              rebuild_index
+              draw_all
+            when :update_additional_progress
+              @progress.say("Fetched details #{@bg_fetched.value}/#{@bg_total.value} for new items... (press 'c' to cancel)")
+            # Verification messages
+            when :verification_ask_fix
+              @progress.say("Auto-fixing issues... (press 'c' to cancel)")
+            when :auto_start_verification
+              @progress.say("Starting automatic verification...")
+              sleep(0.5)
+              start_verification_check
+            when Array
+              if update[0] == :start_detail_fetch
+                _, new_movies, new_series, total_items = update
+                @progress.say("Added #{new_movies} movies, #{new_series} series. Fetching details for #{total_items} items...")
+              elsif update[0] == :additional_fetch_complete
+                _, new_movies, new_series = update
+                @progress.say("✓ Added #{new_movies} new movies, #{new_series} new series with full details")
+                sleep 1.5
+                @progress.clear
+                update_footer
+                @footer.refresh
+              elsif update[0] == :additional_fetch_error
+                _, error_msg = update
+                @progress.say("✗ Error loading lists: #{error_msg}")
+                sleep 2.0
+                @progress.clear
+                update_footer
+                @footer.refresh
+              elsif update[0] == :start_verification
+                _, total_items = update
+                @progress.say("Verifying #{total_items} items... (press 'c' to cancel)")
+              elsif update[0] == :verification_progress
+                _, current, total = update
+                @progress.say("Verified #{current}/#{total} items... (press 'c' to cancel)")
+              elsif update[0] == :verification_complete
+                @progress.say("✓ Verification complete - no issues found")
+                sleep 1.5
+                @progress.clear
+                update_footer
+                @footer.refresh
+              elsif update[0] == :verification_issues_found
+                _, missing_details, missing_posters, incomplete_data, total = update
+                @progress.say("⚠ Found #{total} issues: #{missing_details} missing details, #{incomplete_data} incomplete, #{missing_posters} missing posters")
+                sleep 2.0
+              elsif update[0] == :start_fixing
+                _, items_to_fix = update
+                @progress.say("Fixing #{items_to_fix} items with missing/incomplete data... (press 'c' to cancel)")
+              elsif update[0] == :fix_progress
+                _, current, total = update
+                @progress.say("Fixed #{current}/#{total} items... (press 'c' to cancel)")
+              elsif update[0] == :verification_fix_complete
+                _, fixed_count = update
+                @progress.say("✓ Verification complete - fixed #{fixed_count} items")
+                sleep 2.0
+                @progress.clear
+                update_footer
+                @footer.refresh
+              elsif update[0] == :verification_error
+                _, error_msg = update
+                @progress.say("✗ Verification error: #{error_msg}")
+                sleep 2.0
+                @progress.clear
+                update_footer
+                @footer.refresh
+              end
+            end
+          end
+        rescue ThreadError
+          # Queue was empty, continue
+        end
+      end
+      if !@fetching && defined?(@last_footer_update)
+        if Time.now - @last_footer_update > 1.0
+          update_footer
+          @last_footer_update = Time.now
+        end
+      elsif !defined?(@last_footer_update)
+        @last_footer_update = Time.now
+        update_footer unless @fetching
+      end
+    end
+  end
+
+  # INPUT HANDLING {{{1
+  def handle_input #{{{2
+    panes = [@list, @genres, @wish, @dump]
+    items = @index_list.empty? ? (@show_movies ? @movies : @series) : @index_list
+    
+    # Handle help mode input separately
+    if @help_mode != :hidden # {{{3
+      case getchr
+      when 'UP' # {{{4
+        if @help_mode == :search
+          # Scroll content only, header stays fixed
+          @search_content_scroll = [(@search_content_scroll || 0) - 1, 0].max
+          update_search_display
+        else
+          @help.ix = [@help.ix - 1, 0].max
+          update_help
+        end
+        return
+      when 'DOWN' # {{{4
+        if @help_mode == :search
+          # Scroll content only, header stays fixed
+          content_height = @help.h - 5  # header(3) + border(2)
+          max_scroll = [@search_content_lines.size - content_height, 0].max
+          @search_content_scroll = [(@search_content_scroll || 0) + 1, max_scroll].min
+          update_search_display
+        else
+          lines = @help.text.split("\n")
+          visible_lines = @help.h - 2
+          max_top = [lines.size - visible_lines, 0].max
+          @help.ix = [@help.ix + 1, max_top].min
+          update_help
+        end
+        return
+      when 'TAB' # {{{4
+        if @help_mode == :search && @search_results && !@search_results.empty?
+          @search_selection_index = ((@search_selection_index || 0) + 1) % @search_results.size
+          build_search_help(@search_results, @search_query || "")
+          scroll_to_search_selection
+        end
+        return
+      when 'S-TAB' # {{{4 (Shift-TAB)
+        if @help_mode == :search && @search_results && !@search_results.empty?
+          @search_selection_index = ((@search_selection_index || 0) - 1) % @search_results.size
+          build_search_help(@search_results, @search_query || "")
+          scroll_to_search_selection
+        end
+        return
+      when 'PgUP' # {{{4
+        if @help_mode == :search
+          content_height = @help.h - 5  # header(3) + border(2)
+          @search_content_scroll = [(@search_content_scroll || 0) - content_height, 0].max
+          update_search_display
+        else
+          @help.ix = [@help.ix - (@help.h - 2), 0].max
+          update_help
+        end
+        return
+      when 'PgDOWN' # {{{4
+        if @help_mode == :search
+          content_height = @help.h - 5  # header(3) + border(2)
+          max_scroll = [@search_content_lines.size - content_height, 0].max
+          @search_content_scroll = [(@search_content_scroll || 0) + content_height, max_scroll].min
+          update_search_display
+        else
+          lines = @help.text.split("\n")
+          visible_lines = @help.h - 2
+          max_top = [lines.size - visible_lines, 0].max
+          @help.ix = [@help.ix + (@help.h - 2), max_top].min
+          update_help
+        end
+        return
+      when '?' # {{{4
+        # Cycle through help modes
+        case @help_mode
+        when :general
+          show_help(:regions)
+        when :regions
+          show_help(:general)
+        when :search
+          show_help(:general)
+        when :preview
+          show_help(:general)
+        end
+        return
+      when 'ENTER' # {{{4
+        if @help_mode == :search && @search_results && !@search_results.empty?
+          # Go to preview mode
+          selected = @search_results[@search_selection_index || 0]
+          if selected
+            if selected[:already_have]
+              # Jump to existing item in library
+              hide_help
+              
+              # Find the item in our library
+              existing_item = (@movies + @series).find { |entry| entry[:id] == selected[:id] }
+              if existing_item
+                # Determine if it's a movie or series and switch to appropriate view
+                details = @details_cache[selected[:id]] || {}
+                is_series = details[:type] == 'TVSeries'
+                
+                if is_series && @show_movies
+                  # Switch to series view
+                  @show_movies = false
+                  @show_series = true
+                  rebuild_index
+                elsif !is_series && @show_series
+                  # Switch to movies view
+                  @show_movies = true
+                  @show_series = false
+                  rebuild_index
+                end
+                
+                # Find the item's position in the filtered list
+                item_index = @index_list.find_index { |item| item[:id] == selected[:id] }
+                if item_index
+                  @list.index = item_index
+                  update_list  # This will scroll the list to show the selected item
+                  update_detail  # Update detail pane to show the item
+                  @footer.say("✓ Jumped to #{selected[:title]} in library")
+                else
+                  # Debug why it's filtered out
+                  raw_item = (@movies + @series).find { |entry| entry[:id] == selected[:id] }
+                  details = @details_cache[selected[:id]] || {}
+                  
+                  # Check each filter condition
+                  rating_ok = raw_item[:rating] >= @rating_threshold
+                  dump_list = is_series ? @series_dump_list : @movie_dump_list
+                  not_dumped = !dump_list.include?(selected[:id])
+                  
+                  # Show specific reason
+                  if !rating_ok
+                    @footer.say("⚠ #{selected[:title]} filtered out: rating #{raw_item[:rating]} < #{@rating_threshold}")
+                  elsif !not_dumped
+                    @footer.say("⚠ #{selected[:title]} filtered out: in dump list")
+                  else
+                    @footer.say("⚠ #{selected[:title]} filtered out: year/genre filters")
+                  end
+                end
+                sleep(3)  # Longer sleep for debug messages
+                update_footer
+              end
+            else
+              @preview_item = selected
+              @preview_details = nil
+              show_help(:preview)
+              # Fetch details in background
+              Thread.new do
+                @preview_details = fetch_details(selected[:id])
+                @help.text = build_preview_help(@preview_item)
+                @help.refresh if @help_mode == :preview
+              end
+            end
+          end
+        elsif @help_mode == :preview && @preview_item
+          # Add to library from preview
+          hide_help
+          
+          # Double-check for duplicates before adding
+          already_exists = (@movies + @series).any? { |entry| entry[:id] == @preview_item[:id] }
+          if already_exists
+            @footer.say("⚠ #{@preview_item[:title]} already in library")
+            sleep(1.5)
+          else
+            @footer.say("Adding #{@preview_item[:title]}...")
+            if @preview_item[:id].start_with?('tt')
+              details = @preview_details || fetch_details(@preview_item[:id])
+              
+              # Debug: log what we're adding
+              File.open("/tmp/imdb_add_debug.log", "a") do |f|
+                f.puts "[#{Time.now}] Adding #{@preview_item[:id]} - #{@preview_item[:title]} - Type: #{details[:type]}"
+                f.puts "  Movies before: #{@movies.size}, Series before: #{@series.size}"
+              end
+              
+              if details[:type] == 'TVSeries'
+                @series << { id: @preview_item[:id], title: @preview_item[:title], rating: details[:rating] || 0.0 }
+              else
+                @movies << { id: @preview_item[:id], title: @preview_item[:title], rating: details[:rating] || 0.0 }
+              end
+              
+              # Debug: log after adding
+              File.open("/tmp/imdb_add_debug.log", "a") do |f|
+                f.puts "  Movies after: #{@movies.size}, Series after: #{@series.size}"
+              end
+              
+              download_poster(@preview_item[:id], cache_dir)
+              save_current_state
+              build_genre_list
+              rebuild_index
+              @footer.say("✓ Added #{@preview_item[:title]} to library")
+              sleep(1.5)
+            end
+          end
+        else
+          hide_help
+        end
+        return
+      when 'ESC', 'q' # {{{4
+        if @help_mode == :preview
+          # Go back to search results
+          show_help(:search)
+        else
+          hide_help
+        end
+        return
+      when '/' # {{{4
+        if @help_mode == :search
+          hide_help
+          # Trigger new search
+          query = @footer.ask("Search IMDb: ", "").strip
+          return if query.empty?
+          @footer.say("Searching...")
+          results = search_imdb(query, 10)
+          
+          if results.empty?
+            @footer.say("No results found")
+            sleep(1)
+          else
+            @search_results = results
+            @search_query = query
+            show_help(:search)
+          end
+        end
+        return
+      else
+        return
+      end
+    end
+    
+    case getchr
+    when 'c' # {{{3
+      @cancel_scrape.make_true if defined?(@cancel_scrape)
+      return
+    when 'q','Q' then exit # {{{3
+    when '?' # {{{3
+      show_help(:general)
+      return
+    when 'TAB' # {{{3
+      panes.each { |p| p.border = false; p.border_refresh }
+      @focus = panes[(panes.index(@focus) + 1) % panes.size]
+      @focus.border = true; @focus.border_refresh
+    when 'UP' # {{{3
+      max = case @focus
+            when @list then items.size - 1
+            when @genres then @genres_list.size - 1
+            when @wish then (@show_movies ? @movie_wish_list : @series_wish_list).size - 1
+            when @dump then (@show_movies ? @movie_dump_list : @series_dump_list).size - 1
+            end
+      @focus.index = max if (@focus.index -= 1) < 0
+    when 'DOWN' # {{{3
+      max = case @focus
+            when @list then items.size - 1
+            when @genres then @genres_list.size - 1
+            when @wish then (@show_movies ? @movie_wish_list : @series_wish_list).size - 1
+            when @dump then (@show_movies ? @movie_dump_list : @series_dump_list).size - 1
+            end
+      @focus.index = 0 if (@focus.index += 1) > max
+    when 'PgUP' # {{{3
+      @focus.index = [@focus.index - @focus.h, 0].max
+    when 'PgDOWN' # {{{3
+      max = case @focus
+            when @list then items.size - 1
+            when @genres then @genres_list.size - 1
+            when @wish then (@show_movies ? @movie_wish_list : @series_wish_list).size - 1
+            when @dump then (@show_movies ? @movie_dump_list : @series_dump_list).size - 1
+            end
+      @focus.index = [@focus.index + @focus.h, max].min
+    when 'HOME' # {{{3
+      @focus.index = 0
+    when 'END' # {{{3
+      max = case @focus
+            when @list then items.size - 1
+            when @genres then @genres_list.size - 1
+            when @wish then (@show_movies ? @movie_wish_list : @series_wish_list).size - 1
+            when @dump then (@show_movies ? @movie_dump_list : @series_dump_list).size - 1
+            end
+      @focus.index = max
+    when '+' # {{{3
+      if @focus == @list && !items.empty?
+        id = items[@list.index][:id]
+        details = @details_cache[id] || {}
+        if details[:type] == 'TVSeries'
+          @series_wish_list << id unless @series_wish_list.include?(id)
+        else
+          @movie_wish_list << id unless @movie_wish_list.include?(id)
+        end
+      elsif @focus == @genres && !@genres_list.empty?
+        g = @genres_list[@genres.index]
+        @genre_filters[g] = (@genre_filters[g] == 1 ? 0 : 1)
+        rebuild_index
+      end
+    when '-' # {{{3
+      if @focus == @list && !items.empty?
+        id = items[@list.index][:id]
+        details = @details_cache[id] || {}
+        if details[:type] == 'TVSeries'
+          @series_dump_list << id unless @series_dump_list.include?(id)
+        else
+          @movie_dump_list << id unless @movie_dump_list.include?(id)
+        end
+        rebuild_index
+      elsif @focus == @genres && !@genres_list.empty?
+        g = @genres_list[@genres.index]
+        @genre_filters[g] = (@genre_filters[g] == -1 ? 0 : -1)
+        rebuild_index
+      end
+    when 'r' # {{{3
+      @rating_threshold = @footer.ask("Min rating? ", @rating_threshold.to_s).to_f
+      rebuild_index
+      update_footer
+    when 'y' # {{{3
+      @year_min = @footer.ask("Min year (or blank for none)? ", @year_min.to_s).strip
+      @year_min = @year_min.empty? ? nil : @year_min.to_i
+      rebuild_index
+      update_footer
+    when 'Y' # {{{3
+      @year_max = @footer.ask("Max year (or blank for none)? ", @year_max.to_s).strip
+      @year_max = @year_max.empty? ? nil : @year_max.to_i
+      rebuild_index
+      update_footer
+    when 'l' # {{{3
+      @show_movies = !@show_movies; @show_series = !@show_series
+      rebuild_index; @list.index = 0
+    when 'o' # {{{3
+      @sort_by = (@sort_by == :rating ? :alpha : :rating)
+      rebuild_index
+    when 'R' # {{{3
+      regions = get_regions
+      current_name = regions[@tmdb_region] || @tmdb_region
+      input = @footer.ask("Region [#{@tmdb_region}=#{current_name}] (? for help): ", "").strip.upcase
+      
+      if input.empty?
+        # Keep current region
+      elsif input == '?'
+        show_help(:regions)
+        return
+      elsif regions.key?(input)
+        @tmdb_region = input
+        @footer.say("Region set to #{input} (#{regions[input]})")
+        sleep(1)
+        update_footer
+      else
+        @footer.say("Invalid region code. Press '?' for help.")
+        sleep(1)
+        update_footer
+      end
+    when 'k' # {{{3
+      new_key = @footer.ask("Enter TMDb API key (or leave blank to disable): ", @tmdb_key.to_s).strip
+      @tmdb_key = new_key
+      if @tmdb_key.empty?
+        @footer.say("TMDb disabled")
+      else
+        @footer.say("TMDb key updated")
+      end
+      sleep(1)
+      update_footer
+    when 'f' # {{{3
+      # Re-fetch details for current item
+      items = get_current_list_items
+      if !items.empty? && @list.index < items.size
+        current = items[@list.index]
+        @footer.say("Re-fetching #{current[:title]}...")
+        
+        # Remove old details from cache to force fresh fetch
+        @details_cache.delete(current[:id])
+        
+        # Fetch fresh details
+        new_details = fetch_details(current[:id])
+        
+        # Update the rating in our main arrays
+        movie_item = @movies.find { |m| m[:id] == current[:id] }
+        series_item = @series.find { |s| s[:id] == current[:id] }
+        
+        if movie_item
+          movie_item[:rating] = new_details[:rating] || 0.0
+        elsif series_item
+          series_item[:rating] = new_details[:rating] || 0.0
+        end
+        
+        # Re-download poster
+        download_poster(current[:id], cache_dir)
+        
+        # Save and refresh
+        save_current_state
+        rebuild_index
+        
+        @footer.say("✓ Re-fetched #{current[:title]} - Rating: #{new_details[:rating] || 'N/A'}")
+        sleep(2)
+        update_footer
+      else
+        @footer.say("No item selected")
+        sleep(1)
+        update_footer
+      end
+    when 'I' # {{{3
+      return if @fetching
+      answer = @footer.ask("Full fetch (scrape & download all)? (y/N) ", "N")
+      if answer =~ /\A[yY]/
+        cache = cache_dir
+        FileUtils.rm_rf(cache); FileUtils.mkdir_p(cache)
+        @progress.say("Starting full fetch...")
+        load_top250
+        start_background_fetch
+      end
+    when 'i' # {{{3
+      return if @fetching
+      start_incremental_update
+    when 'L' # {{{3
+      return if @fetching
+      answer = @footer.ask("Load additional lists (popular + trending)? (y/N) ", "N")
+      if answer =~ /\A[yY]/
+        start_additional_lists_fetch
+      end
+    when 'D' # {{{3
+      # Remove duplicates
+      movie_before = @movies.size
+      series_before = @series.size
+      
+      @movies.uniq! { |m| m[:id] }
+      @series.uniq! { |s| s[:id] }
+      
+      movie_removed = movie_before - @movies.size
+      series_removed = series_before - @series.size
+      total_removed = movie_removed + series_removed
+      
+      if total_removed > 0
+        save_current_state
+        build_genre_list
+        rebuild_index
+        @footer.say("✓ Removed #{total_removed} duplicates (#{movie_removed} movies, #{series_removed} series)")
+      else
+        @footer.say("No duplicates found")
+      end
+      sleep(2)
+      update_footer
+    when 'v' # {{{3
+      return if @fetching
+      start_verification_check
+    when '/' # {{{3
+      query = @footer.ask("Search IMDb: ", "").strip
+      return if query.empty?
+      @footer.say("Searching...")
+      results = search_imdb(query, 10)
+      
+      if results.empty?
+        @footer.say("No results found")
+        sleep(1)
+      else
+        # Show results in help pane with better context
+        @search_results = results
+        @search_query = query
+        show_help(:search)
+        return
+      end
+    when 'ENTER' # {{{3
+      return if @fetching
+      Rcurses.clear_screen
+      [@header, @list, @genres, @wish, @dump, @detail, @footer].each(&:full_refresh)
+      @last_poster_id = nil
+    else
+      return
+    end
+    draw_all
+  end
+
+end # class IMDBApp
+
+# MAIN {{{1
+IMDBApp.new
+
+# VIM MODELINE{{{1 
+# vim: set sw=2 sts=2 et fdm=marker fdn=2 fcs=fold\:\ :
