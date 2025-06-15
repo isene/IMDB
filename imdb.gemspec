@@ -1,12 +1,12 @@
 Gem::Specification.new do |s|
   s.name        = 'imdb-terminal'
-  s.version     = '1.1.0'
+  s.version     = '1.2.0'
   s.licenses    = ['Unlicense']
   s.summary     = "Enhanced IMDb movies and series terminal browser"
-  s.description = "Discover and manage movies and TV series from IMDb's Top 250 lists. Features smart search with preview mode, advanced filtering by rating/year/genre, streaming information via TMDb, wish lists, and terminal poster display. Enhanced with jump-to-existing items, duplicate management, and robust data handling. Version 1.1: A full rewrite using rcurses - with lots of new functionality."
+  s.description = "Discover and manage movies and TV series from IMDb's Top 250 lists. Features smart search with preview mode, advanced filtering by rating/year/genre, streaming information via TMDb, wish lists, and terminal poster display. Enhanced with jump-to-existing items, duplicate management, and robust data handling. Version 1.1: A full rewrite using rcurses - with lots of new functionality. 1.2: Added jump-to for searched&scraped items."
   s.authors     = ["Geir Isene"]
   s.email       = 'g@isene.com'
-  s.files       = ["imdb", "README.md"]
+  s.files       = ["bin/imdb", "README.md"]
   s.executables = ['imdb']
   s.require_paths = ['.']
   

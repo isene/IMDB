@@ -14,7 +14,7 @@
 #             for any damages resulting from its use. Further, I am under no
 #             obligation to maintain or extend this software. It is provided 
 #             on an 'as is' basis without any expressed or implied warranty.
-# Version:    1.1: Full rewrite based on rcurses with much more functionality
+# Version:    1.2: Added jump-to for searched&scraped items
 
 # REQUIRES AND CONSTANTS {{{1
 require 'io/console'
@@ -2147,7 +2147,17 @@ class IMDBApp
               save_current_state
               build_genre_list
               rebuild_index
-              @footer.say("✓ Added #{@preview_item[:title]} to library")
+              
+              # Jump to the newly added item in the list
+              item_index = @index_list.find_index { |item| item[:id] == @preview_item[:id] }
+              if item_index
+                @list.index = item_index
+                update_list  # This will scroll the list to show the selected item
+                update_detail  # Update detail pane to show the item
+                @footer.say("✓ Added #{@preview_item[:title]} to library and jumped to it")
+              else
+                @footer.say("✓ Added #{@preview_item[:title]} to library")
+              end
               sleep(1.5)
             end
           end
