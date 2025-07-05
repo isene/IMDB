@@ -44,6 +44,7 @@ gem install imdb-terminal
 ### Dependencies
 - **w3mimgdisplay** (for poster display): `sudo apt install w3m-img`
 - **ImageMagick** (for poster processing): `sudo apt install imagemagick`
+- **xdotool** (for image redraw on workspace switch): `sudo apt install xdotool`
 
 ### Quick Start
 ```bash
@@ -140,6 +141,10 @@ In the Genres pane:
 - Ensure w3m-img is installed: `sudo apt install w3m-img`
 - Check terminal supports images (works best in terminals like urxvt, kitty, iTerm2)
 
+**Posters disappear after workspace switch:**
+- Ensure xdotool is installed: `sudo apt install xdotool`
+- Version 1.3.0+ includes automatic image redraw for i3 workspace switching
+
 **Encoding errors:**
 - Fixed automatically with built-in encoding handling
 
@@ -182,6 +187,7 @@ This enhanced version includes:
 - **Re-fetch capability** for data correction
 - **Improved encoding** handling for international content
 - **Better UX** with compact UI and auto-refresh
+- **Image redraw functionality** for i3 workspace switching (v1.3.0+)
 
 ## © License
 

@@ -1,9 +1,9 @@
 Gem::Specification.new do |s|
   s.name        = 'imdb-terminal'
-  s.version     = '1.2.0'
+  s.version     = '1.3.0'
   s.licenses    = ['Unlicense']
   s.summary     = "Enhanced IMDb movies and series terminal browser"
-  s.description = "Discover and manage movies and TV series from IMDb's Top 250 lists. Features smart search with preview mode, advanced filtering by rating/year/genre, streaming information via TMDb, wish lists, and terminal poster display. Enhanced with jump-to-existing items, duplicate management, and robust data handling. Version 1.1: A full rewrite using rcurses - with lots of new functionality. 1.2: Added jump-to for searched&scraped items."
+  s.description = "Discover and manage movies and TV series from IMDb's Top 250 lists. Features smart search with preview mode, advanced filtering by rating/year/genre, streaming information via TMDb, wish lists, and terminal poster display. Enhanced with jump-to-existing items, duplicate management, and robust data handling. Version 1.1: A full rewrite using rcurses - with lots of new functionality. 1.2: Added jump-to for searched&scraped items. 1.3.0: Added image redraw functionality for i3 workspace switching."
   s.authors     = ["Geir Isene"]
   s.email       = 'g@isene.com'
   s.files       = ["bin/imdb", "README.md"]
@@ -39,6 +39,7 @@ Gem::Specification.new do |s|
     External dependencies for full functionality:
     - w3m-img (for poster display): sudo apt install w3m-img
     - imagemagick (for poster processing): sudo apt install imagemagick
+    - xdotool (for image redraw on workspace switch): sudo apt install xdotool
     
     Enjoy discovering your next favorite movie! :-)
   MSG

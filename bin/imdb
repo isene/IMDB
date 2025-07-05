@@ -14,7 +14,7 @@
 #             for any damages resulting from its use. Further, I am under no
 #             obligation to maintain or extend this software. It is provided 
 #             on an 'as is' basis without any expressed or implied warranty.
-# Version:    1.2: Added jump-to for searched&scraped items
+# Version:    1.3.0: Added image redraw functionality for i3 workspace switching
 
 # REQUIRES AND CONSTANTS {{{1
 require 'io/console'
@@ -77,6 +77,8 @@ class IMDBApp
     rebuild_index
     @list.border = true
     @last_poster_id = nil
+    @current_image = nil
+    @last_active_window = nil
     
     run_loop
   ensure
@@ -1829,6 +1831,12 @@ class IMDBApp
           end
 
           `echo "0;1;#{px};#{py};#{iw};#{ih};;;;;\"#{file}\"\n4;\n3;" | #{w3m} 2>/dev/null`
+          
+          # Track the current image
+          @current_image = file
+        else
+          # Clear current image if no file exists
+          @current_image = nil
         end
       end
     rescue Timeout::Error
@@ -1836,15 +1844,38 @@ class IMDBApp
     end
   end
 
+  def check_image_redraw #{{{2
+    # Only check if we have an image currently displayed
+    return unless @current_image && File.exist?(@current_image)
+    
+    begin
+      # Check if we're in the active window - if not, image overlay might be cleared
+      active_window = `xdotool getactivewindow 2>/dev/null`.chomp
+      return if active_window.empty?
+      
+      # Check if this terminal window is the active one
+      current_window = `xdotool getwindowfocus 2>/dev/null`.chomp
+      
+      # Only redraw if we detect a focus change (simple heuristic)
+      if @last_active_window && @last_active_window != active_window && current_window == active_window
+        # Window focus changed and we're now active - redraw image using last poster id
+        show_poster(@last_poster_id) if @last_poster_id
+      end
+      
+      @last_active_window = active_window
+    rescue
+      # Silently fail - we don't want focus checking to break anything
+    end
+  end
+
   # MAIN LOOP {{{1
   def run_loop #{{{2
     @last_poster_id = nil
+    @current_image = nil
+    @last_active_window = nil
     draw_all
     loop do
-      ready = IO.select([STDIN], nil, nil, 0.05)
-      if ready
-        handle_input
-      end
+      handle_input
       if defined?(@ui_update_queue) && @ui_update_queue
         begin
           while !@ui_update_queue.empty?
@@ -1966,7 +1997,12 @@ class IMDBApp
     
     # Handle help mode input separately
     if @help_mode != :hidden # {{{3
-      case getchr
+      key = getchr(1)  # 1 second timeout for help mode
+      unless key  # If timeout occurred (no key pressed)
+        check_image_redraw  # Check if image needs redraw after workspace switch
+        return
+      end
+      case key
       when 'UP' # {{{4
         if @help_mode == :search
           # Scroll content only, header stays fixed
@@ -2197,7 +2233,13 @@ class IMDBApp
       end
     end
     
-    case getchr
+    key = getchr(1)  # 1 second timeout for normal input
+    unless key  # If timeout occurred (no key pressed)
+      check_image_redraw  # Check if image needs redraw after workspace switch
+      return
+    end
+    
+    case key
     when 'c' # {{{3
       @cancel_scrape.make_true if defined?(@cancel_scrape)
       return
