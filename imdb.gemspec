@@ -1,9 +1,9 @@
 Gem::Specification.new do |s|
   s.name        = 'imdb-terminal'
-  s.version     = '1.3.0'
+  s.version     = '2.0.0'
   s.licenses    = ['Unlicense']
   s.summary     = "Enhanced IMDb movies and series terminal browser"
-  s.description = "Discover and manage movies and TV series from IMDb's Top 250 lists. Features smart search with preview mode, advanced filtering by rating/year/genre, streaming information via TMDb, wish lists, and terminal poster display. Enhanced with jump-to-existing items, duplicate management, and robust data handling. Version 1.1: A full rewrite using rcurses - with lots of new functionality. 1.2: Added jump-to for searched&scraped items. 1.3.0: Added image redraw functionality for i3 workspace switching."
+  s.description = "Discover and manage movies and TV series from IMDb's Top 250 lists. Features smart search with preview mode, advanced filtering by rating/year/genre, streaming information via TMDb, wish lists, and terminal poster display. Enhanced with jump-to-existing items, duplicate management, and robust data handling. Version 2.0.0: Breaking change - requires rcurses 6.0.0+ with explicit initialization for Ruby 3.4+ compatibility."
   s.authors     = ["Geir Isene"]
   s.email       = 'g@isene.com'
   s.files       = ["bin/imdb", "README.md"]
@@ -11,7 +11,7 @@ Gem::Specification.new do |s|
   s.require_paths = ['.']
   
   # Core dependencies
-  s.add_runtime_dependency 'rcurses', '~> 4.8'
+  s.add_runtime_dependency 'rcurses', '~> 6.0'
   s.add_runtime_dependency 'nokogiri', '~> 1.13'
   s.add_runtime_dependency 'concurrent-ruby', '~> 1.1'
   

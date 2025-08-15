@@ -14,7 +14,7 @@
 #             for any damages resulting from its use. Further, I am under no
 #             obligation to maintain or extend this software. It is provided 
 #             on an 'as is' basis without any expressed or implied warranty.
-# Version:    1.3.0: Added image redraw functionality for i3 workspace switching
+# Version:    2.0.0: Breaking change - requires rcurses 6.0.0+ with explicit init
 
 # REQUIRES AND CONSTANTS {{{1
 require 'io/console'
@@ -36,6 +36,9 @@ require 'rcurses'
 include Rcurses
 include Rcurses::Cursor
 include Rcurses::Input
+
+# Initialize rcurses (required for rcurses 6.0.0+)
+Rcurses.init!
 
 Thread.report_on_exception = false
 CONFIG_FILE       = File.join(Dir.home, '.imdb.yml')
