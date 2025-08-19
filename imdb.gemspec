@@ -36,10 +36,13 @@ Gem::Specification.new do |s|
     3. Optional: Get a free TMDb API key for streaming info
     4. Press '?' for help once running
     
-    External dependencies for full functionality:
+    External dependencies for full functionality (Linux/macOS only):
     - w3m-img (for poster display): sudo apt install w3m-img
     - imagemagick (for poster processing): sudo apt install imagemagick
     - xdotool (for image redraw on workspace switch): sudo apt install xdotool
+    
+    Note: Poster display is not available on Windows, but all other 
+    functionality works normally.
     
     Enjoy discovering your next favorite movie! :-)
   MSG

@@ -41,10 +41,12 @@ The screenshot gives you an overview of the layout of the panes:
 gem install imdb-terminal
 ```
 
-### Dependencies
+### Dependencies (Linux/macOS)
 - **w3mimgdisplay** (for poster display): `sudo apt install w3m-img`
 - **ImageMagick** (for poster processing): `sudo apt install imagemagick`
 - **xdotool** (for image redraw on workspace switch): `sudo apt install xdotool`
+
+**Windows**: All core functionality works on Windows, but poster display is not available due to terminal limitations.
 
 ### Quick Start
 ```bash
@@ -138,8 +140,9 @@ In the Genres pane:
 ### Common Issues
 
 **No posters displayed:**
-- Ensure w3m-img is installed: `sudo apt install w3m-img`
+- **Linux/macOS**: Ensure w3m-img is installed: `sudo apt install w3m-img`
 - Check terminal supports images (works best in terminals like urxvt, kitty, iTerm2)
+- **Windows**: Poster display is not supported due to terminal limitations
 
 **Posters disappear after workspace switch:**
 - Ensure xdotool is installed: `sudo apt install xdotool`

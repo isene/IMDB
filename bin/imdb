@@ -46,6 +46,9 @@ DATA_DIR          = File.join(Dir.home, '.imdb', 'data')
 CACHE_MUTEX       = Mutex.new
 MAX_FETCH_RETRIES = 3
 
+# Platform detection
+WINDOWS = Gem.win_platform?
+
 # MAIN CLASS {{{1
 class IMDBApp
   # INITIALIZATION {{{1
@@ -1320,7 +1323,11 @@ class IMDBApp
     help_text << "  • Use genre filters to find specific types of content\n".fg(230)
     help_text << "  • Dump list removes items from main view permanently\n".fg(230)
     help_text << "  • TMDb provides streaming provider information\n".fg(230)
-    help_text << "  • Posters are displayed in the terminal using w3mimgdisplay\n".fg(230)
+    unless WINDOWS
+      help_text << "  • Posters are displayed in the terminal using w3mimgdisplay\n".fg(230)
+    else
+      help_text << "  • Poster display not available on Windows\n".fg(230)
+    end
     
     help_text
   end
@@ -1803,6 +1810,8 @@ class IMDBApp
   end
 
   def show_poster(tconst) #{{{2
+    return if WINDOWS # Skip image display on Windows for now
+    
     w3m = "/usr/lib/w3m/w3mimgdisplay"
     return unless File.executable?(w3m)
     cache = cache_dir
@@ -1848,6 +1857,7 @@ class IMDBApp
   end
 
   def check_image_redraw #{{{2
+    return if WINDOWS # Skip image redraw on Windows
     # Only check if we have an image currently displayed
     return unless @current_image && File.exist?(@current_image)
     
