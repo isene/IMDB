@@ -14,7 +14,7 @@
 #             for any damages resulting from its use. Further, I am under no
 #             obligation to maintain or extend this software. It is provided 
 #             on an 'as is' basis without any expressed or implied warranty.
-# Version:    2.0.0: Breaking change - requires rcurses 6.0.0+ with explicit init
+# Version:    2.1.0: Modern poster display using termpix gem
 
 # REQUIRES AND CONSTANTS {{{1
 require 'io/console'
@@ -32,6 +32,7 @@ require 'nokogiri'
 require 'fileutils'
 require 'concurrent'
 require 'rcurses'
+require 'termpix'
 
 include Rcurses
 include Rcurses::Cursor
@@ -84,8 +85,9 @@ class IMDBApp
     @list.border = true
     @last_poster_id = nil
     @current_image = nil
+    @termpix = Termpix::Display.new unless WINDOWS
     @last_active_window = nil
-    
+
     run_loop
   ensure
     save_config
@@ -1324,7 +1326,7 @@ class IMDBApp
     help_text << "  • Dump list removes items from main view permanently\n".fg(230)
     help_text << "  • TMDb provides streaming provider information\n".fg(230)
     unless WINDOWS
-      help_text << "  • Posters are displayed in the terminal using w3mimgdisplay\n".fg(230)
+      help_text << "  • Posters are displayed using termpix (Sixel or w3m protocols)\n".fg(230)
     else
       help_text << "  • Poster display not available on Windows\n".fg(230)
     end
@@ -1811,43 +1813,33 @@ class IMDBApp
 
   def show_poster(tconst) #{{{2
     return if WINDOWS # Skip image display on Windows for now
-    
-    w3m = "/usr/lib/w3m/w3mimgdisplay"
-    return unless File.executable?(w3m)
+    return unless @termpix&.supported?
+
     cache = cache_dir
     file  = File.join(cache, "#{tconst}.jpg")
 
     begin
       Timeout.timeout(2) do
-        info = `xwininfo -id $(xdotool getactivewindow) 2>/dev/null`
-        return unless info =~ /Width:\s*(\d+).*Height:\s*(\d+)/m
-        term_w, term_h = $1.to_i, $2.to_i
         rows, cols = IO.console.winsize
-        cw = term_w.to_f / cols
-        ch = term_h.to_f / rows
-        px = ((@detail.x - 1) * cw).to_i
-        py = (25 * ch).to_i
-        max_w = (40 * cw).to_i
-        max_h = ((rows - 28) * ch).to_i
 
-        `echo "6;#{px};#{py};#{max_w+4};#{max_h+4};\n4;\n3;" | #{w3m} 2>/dev/null`
+        # Always clear previous poster first to prevent overlapping
+        @termpix.clear(
+          x: @detail.x - 1,
+          y: 25,
+          width: 40,
+          height: rows - 27,
+          term_width: cols,
+          term_height: rows)
 
         if File.exist?(file) && File.size?(file) > 0
-          iw, ih = `identify -format "%wx%h" #{file}`.split('x').map(&:to_i)
-
-          if iw > max_w
-            ih = ih * max_w / iw; iw = max_w
-          end
-          if ih > max_h
-            iw = iw * max_h / ih; ih = max_h
-          end
-
-          `echo "0;1;#{px};#{py};#{iw};#{ih};;;;;\"#{file}\"\n4;\n3;" | #{w3m} 2>/dev/null`
-          
-          # Track the current image
+          # Display new poster using termpix
+          @termpix.show(file,
+            x: @detail.x - 1,
+            y: 25,
+            max_width: 40,
+            max_height: rows - 28)
           @current_image = file
         else
-          # Clear current image if no file exists
           @current_image = nil
         end
       end
@@ -1858,24 +1850,26 @@ class IMDBApp
 
   def check_image_redraw #{{{2
     return if WINDOWS # Skip image redraw on Windows
+    return unless @termpix&.supported?
     # Only check if we have an image currently displayed
     return unless @current_image && File.exist?(@current_image)
-    
+
     begin
-      # Check if we're in the active window - if not, image overlay might be cleared
-      active_window = `xdotool getactivewindow 2>/dev/null`.chomp
-      return if active_window.empty?
-      
-      # Check if this terminal window is the active one
-      current_window = `xdotool getwindowfocus 2>/dev/null`.chomp
-      
-      # Only redraw if we detect a focus change (simple heuristic)
-      if @last_active_window && @last_active_window != active_window && current_window == active_window
-        # Window focus changed and we're now active - redraw image using last poster id
-        show_poster(@last_poster_id) if @last_poster_id
+      # For w3m protocol, check if image overlay was cleared
+      if @termpix.protocol == :w3m
+        active_window = `xdotool getactivewindow 2>/dev/null`.chomp
+        return if active_window.empty?
+
+        current_window = `xdotool getwindowfocus 2>/dev/null`.chomp
+
+        # Only redraw if we detect a focus change
+        if @last_active_window && @last_active_window != active_window && current_window == active_window
+          show_poster(@last_poster_id) if @last_poster_id
+        end
+
+        @last_active_window = active_window
       end
-      
-      @last_active_window = active_window
+      # Sixel images persist, no redraw needed
     rescue
       # Silently fail - we don't want focus checking to break anything
     end

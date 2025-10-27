@@ -1,9 +1,9 @@
 Gem::Specification.new do |s|
   s.name        = 'imdb-terminal'
-  s.version     = '2.0.1'
+  s.version     = '2.1.0'
   s.licenses    = ['Unlicense']
   s.summary     = "Enhanced IMDb movies and series terminal browser"
-  s.description = "Discover and manage movies and TV series from IMDb's Top 250 lists. Features smart search with preview mode, advanced filtering by rating/year/genre, streaming information via TMDb, wish lists, and terminal poster display. Enhanced with jump-to-existing items, duplicate management, and robust data handling. Version 2.0.1: Added Windows support - all core functionality works on Windows with graceful handling of platform-specific features."
+  s.description = "IMDB v2.1.0: Modern poster display using termpix gem with Sixel and w3m protocol support. Discover and manage movies and TV series from IMDb's Top 250 lists. Features smart search with preview mode, advanced filtering by rating/year/genre, streaming information via TMDb, wish lists, and terminal poster display. Enhanced with jump-to-existing items, duplicate management, and robust data handling."
   s.authors     = ["Geir Isene"]
   s.email       = 'g@isene.com'
   s.files       = ["bin/imdb", "README.md"]
@@ -12,6 +12,7 @@ Gem::Specification.new do |s|
   
   # Core dependencies
   s.add_runtime_dependency 'rcurses', '~> 6.0'
+  s.add_runtime_dependency 'termpix', '~> 0.1'
   s.add_runtime_dependency 'nokogiri', '~> 1.13'
   s.add_runtime_dependency 'concurrent-ruby', '~> 1.1'
   
@@ -37,9 +38,9 @@ Gem::Specification.new do |s|
     4. Press '?' for help once running
     
     External dependencies for full functionality (Linux/macOS only):
-    - w3m-img (for poster display): sudo apt install w3m-img
-    - imagemagick (for poster processing): sudo apt install imagemagick
-    - xdotool (for image redraw on workspace switch): sudo apt install xdotool
+    - imagemagick (for image processing): sudo apt install imagemagick
+    - For w3m protocol: w3m-img, xdotool (sudo apt install w3m-img xdotool)
+    - For Sixel protocol (mlterm, xterm): imagemagick convert command
     
     Note: Poster display is not available on Windows, but all other 
     functionality works normally.
