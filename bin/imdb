@@ -14,7 +14,7 @@
 #             for any damages resulting from its use. Further, I am under no
 #             obligation to maintain or extend this software. It is provided 
 #             on an 'as is' basis without any expressed or implied warranty.
-# Version:    2.1.0: Modern poster display using termpix gem
+# Version:    2.1.1: Add HTTP timeouts and external command error handling
 
 # REQUIRES AND CONSTANTS {{{1
 require 'io/console'
@@ -411,7 +411,8 @@ class IMDBApp
     uri = "https://www.imdb.com/#{path}/"
     
     begin
-      raw = `curl -sfL -H "User-Agent: #{ua}" "#{uri}"`
+      raw = `curl -sfL --max-time 15 --connect-timeout 10 -H "User-Agent: #{ua}" "#{uri}"`
+      return [] unless $?.success?
       html = raw.force_encoding('UTF-8').scrub('')
       doc = Nokogiri::HTML(html)
       
@@ -454,10 +455,19 @@ class IMDBApp
 
   def scrape_json_ld(path, ua) #{{{2
     uri = "https://www.imdb.com/#{path}/"
-    raw = `curl -sfL -H "User-Agent: #{ua}" "#{uri}"`
+    begin
+      raw = `curl -sfL --max-time 15 --connect-timeout 10 -H "User-Agent: #{ua}" "#{uri}"`
+      unless $?.success?
+        @progress.say("Warning: Failed to fetch #{path}") if defined?(@progress) && @progress
+        return []
+      end
+    rescue => e
+      @progress.say("Warning: curl error for #{path}: #{e.message}") if defined?(@progress) && @progress
+      return []
+    end
     html = raw.force_encoding('UTF-8').scrub('')
     doc = Nokogiri::HTML(html)
-    
+
     if (ld = doc.at_css('script[type="application/ld+json"]'))
       begin
         data = JSON.parse(ld.text)
@@ -475,7 +485,7 @@ class IMDBApp
         # fall back to HTML scrape
       end
     end
-    
+
     doc.css('.lister-list tr').map do |tr|
       rating = tr.at_css('td.ratingColumn strong')&.text.to_f || 0.0
       a      = tr.at_css('td.titleColumn a') or next
@@ -769,16 +779,27 @@ class IMDBApp
   def download_poster(tconst, cache) #{{{2
     url = fetch_imdb_poster_url(tconst)
     return unless url
-    
+
     dest = File.join(cache, "#{tconst}.jpg")
     return if File.exist?(dest) && File.size(dest) > 1000
-    
+
     cmd = [
-      'curl', '-sfL', '--max-time', '10', '--retry', '2', '--retry-delay', '1',
+      'curl', '-sfL', '--max-time', '10', '--connect-timeout', '10',
+      '--retry', '2', '--retry-delay', '1',
       '-H', 'User-Agent: Mozilla/5.0', '-o', dest, url
     ].map { |arg| Shellwords.escape(arg) }.join(' ')
-    
-    system(cmd, err: File::NULL)
+
+    begin
+      system(cmd, err: File::NULL)
+      # Remove incomplete downloads
+      if File.exist?(dest) && File.size(dest) < 100
+        File.delete(dest) rescue nil
+      end
+    rescue => e
+      File.open("/tmp/imdb_fetch_errors.log", "a") do |f|
+        f.puts "[#{Time.now.iso8601}] Poster download failed for #{tconst}: #{e.message}"
+      end
+    end
   end
 
   def fetch_imdb_poster_url(tconst) #{{{2
@@ -786,9 +807,13 @@ class IMDBApp
       html = URI.open(
         "https://www.imdb.com/title/#{tconst}/",
         "User-Agent"      => "Mozilla/5.0",
-        "Accept-Encoding" => "identity"
+        "Accept-Encoding" => "identity",
+        open_timeout:       10,
+        read_timeout:       10
       ).read
-    rescue SocketError, Errno::ECONNREFUSED, OpenURI::HTTPError, Net::HTTPBadResponse
+    rescue SocketError, Errno::ECONNREFUSED, OpenURI::HTTPError,
+           Net::HTTPBadResponse, Net::OpenTimeout, Net::ReadTimeout,
+           Timeout::Error, Errno::ETIMEDOUT
       return nil
     end
     html[/<meta property="og:image" content="([^"]+)"/,1]
@@ -1190,12 +1215,14 @@ class IMDBApp
     uri.query = URI.encode_www_form(q: query, s: 'tt')
     html = nil
     begin
-      Timeout.timeout(5) do
+      Timeout.timeout(15) do
         html = URI.open(uri.to_s,
                         'User-Agent'      => 'Mozilla/5.0',
                         'Accept'          => 'text/html,application/xhtml+xml',
                         'Accept-Language' => 'en-US,en;q=0.9',
-                        'Accept-Encoding' => 'identity'
+                        'Accept-Encoding' => 'identity',
+                        open_timeout:       10,
+                        read_timeout:       10
                       ).read
         # Fix encoding issues
         html = html.force_encoding('UTF-8').scrub('?')

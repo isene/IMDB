@@ -1,9 +1,9 @@
 Gem::Specification.new do |s|
   s.name        = 'imdb-terminal'
-  s.version     = '2.1.0'
+  s.version     = '2.1.1'
   s.licenses    = ['Unlicense']
   s.summary     = "Enhanced IMDb movies and series terminal browser"
-  s.description = "IMDB v2.1.0: Modern poster display using termpix gem with Sixel and w3m protocol support. Discover and manage movies and TV series from IMDb's Top 250 lists. Features smart search with preview mode, advanced filtering by rating/year/genre, streaming information via TMDb, wish lists, and terminal poster display. Enhanced with jump-to-existing items, duplicate management, and robust data handling."
+  s.description = "IMDB v2.1.1: Modern poster display using termpix gem with Sixel and w3m protocol support. Discover and manage movies and TV series from IMDb's Top 250 lists. Features smart search with preview mode, advanced filtering by rating/year/genre, streaming information via TMDb, wish lists, and terminal poster display. Enhanced with jump-to-existing items, duplicate management, robust data handling, and improved HTTP timeout/error handling."
   s.authors     = ["Geir Isene"]
   s.email       = 'g@isene.com'
   s.files       = ["bin/imdb", "README.md"]

@@ -5,6 +5,19 @@ All notable changes to IMDB Terminal will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.1] - 2026-03-21
+
+### Added
+- HTTP timeouts (connect 10s, read 10s) on all curl and URI.open calls
+- Error handling for poster download failures with logging
+- Exit-status checks for curl subprocesses in scrape_json_ld and scrape_trending
+- Expanded rescue clauses for URI.open to catch Net::OpenTimeout, Net::ReadTimeout, Errno::ETIMEDOUT
+- Cleanup of incomplete poster downloads (files under 100 bytes)
+
+### Changed
+- search_imdb outer Timeout raised from 5s to 15s to accommodate the new per-request timeouts
+- Bumped version to 2.1.1
+
 ## [2.1.0] - 2025-10-26
 
 ### Added
