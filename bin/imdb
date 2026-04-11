@@ -1297,32 +1297,32 @@ class IMDBApp
   end
 
   def build_general_help #{{{2
-    help_text = +"IMDb Top Movies & Series Browser - Help\n".b
+    help_text = +"IMDb Top Movies & Series Browser - Help\n".bd
     help_text << "=" * (@help.w - 4) << "\n\n"
     
-    help_text << "NAVIGATION:\n".b
+    help_text << "NAVIGATION:\n".bd
     help_text << "  Tab           Switch between panes (List/Genres/Wish/Dump)\n"
     help_text << "  ↑/↓ Arrows    Navigate within current pane\n"
     help_text << "  PgUp/PgDn     Page up/down in current pane\n"
     help_text << "  Home/End      Jump to first/last item\n\n"
     
-    help_text << "MAIN ACTIONS:\n".b
+    help_text << "MAIN ACTIONS:\n".bd
     help_text << "  +             Add item to Wish List (or toggle + filter in Genres)\n"
     help_text << "  -             Add item to Dump List (or toggle - filter in Genres)\n"
     help_text << "  ENTER         Refresh screen\n"
     help_text << "  q/Q           Quit application\n\n"
     
-    help_text << "FILTERING:\n".b
+    help_text << "FILTERING:\n".bd
     help_text << "  r             Set minimum rating threshold\n"
     help_text << "  l             Toggle between Movies and Series view\n"
     help_text << "  o             Toggle sort order (Rating/Alphabetical)\n"
     help_text << "  y/Y           Set year filters (min/max)\n\n"
     
-    help_text << "TMDB SETTINGS:\n".b
+    help_text << "TMDB SETTINGS:\n".bd
     help_text << "  k             Set TMDb API key\n"
     help_text << "  R             Select region for streaming providers\n\n"
     
-    help_text << "DATA MANAGEMENT:\n".b
+    help_text << "DATA MANAGEMENT:\n".bd
     help_text << "  I             Full fetch (scrape and download all)\n"
     help_text << "  i             Refresh cache (incremental update)\n"
     help_text << "  f             Re-fetch current item details\n"
@@ -1331,24 +1331,24 @@ class IMDBApp
     help_text << "  D             Remove duplicate entries\n"
     help_text << "  /             Search IMDb\n\n"
     
-    help_text << "HELP:\n".b
+    help_text << "HELP:\n".bd
     help_text << "  ?             Show this help (press again to cycle modes)\n"
     help_text << "  ESC/ENTER     Close help window\n\n"
     
-    help_text << "GENRE FILTERING:\n".b
+    help_text << "GENRE FILTERING:\n".bd
     help_text << "  When in Genres pane:\n"
     help_text << "    +           Include genre (green +)\n"
     help_text << "    -           Exclude genre (red -)\n"
     help_text << "    Space       Clear genre filter\n\n"
     
-    help_text << "PANE DESCRIPTIONS:\n".b
+    help_text << "PANE DESCRIPTIONS:\n".bd
     help_text << "  List          Main movie/series list (filtered results)\n"
     help_text << "  Genres        Available genres with +/- filters\n"
     help_text << "  Wish List     Items you want to watch\n"
     help_text << "  Dump List     Items you want to hide\n"
     help_text << "  Detail        Information about selected item\n\n"
     
-    help_text << "TIPS:\n".b.fg(230)
+    help_text << "TIPS:\n".bd.fg(230)
     help_text << "  • Use genre filters to find specific types of content\n".fg(230)
     help_text << "  • Dump list removes items from main view permanently\n".fg(230)
     help_text << "  • TMDb provides streaming provider information\n".fg(230)
@@ -1363,7 +1363,7 @@ class IMDBApp
 
   def build_search_help(results, query) #{{{2
     # Build fixed header (like @wish pane does)
-    header = +"IMDb Search Results for: #{query}\n".b
+    header = +"IMDb Search Results for: #{query}\n".bd
     header << "TAB/S-TAB=Select ENTER=Preview ESC=Cancel /=New\n".fg(248)
     header << "─" * @help.w << "\n"  # Full width
     
@@ -1417,14 +1417,14 @@ class IMDBApp
 
   def build_preview_help(item) #{{{2
     # Header with navigation
-    help_text = +"Preview: #{item[:title] || 'Loading...'}\n".b
+    help_text = +"Preview: #{item[:title] || 'Loading...'}\n".bd
     help_text << "ENTER=Add to Library ESC=Back to Search\n".fg(248)
     help_text << "─" * @help.w << "\n"  # Full width
     
     if @preview_details
       d = @preview_details
       help_text << "\n"
-      help_text << "Rating:     #{d[:rating]} (#{d[:votes] || 0} votes)\n".b
+      help_text << "Rating:     #{d[:rating]} (#{d[:votes] || 0} votes)\n".bd
       help_text << "Type:       #{d[:type] || item[:type]}\n"
       help_text << "Released:   #{d[:release_date] || d[:start_date]}\n"
       help_text << "Runtime:    #{d[:duration]}\n" unless d[:duration].to_s.empty?
@@ -1442,11 +1442,11 @@ class IMDBApp
       if @tmdb_key && !@tmdb_key.strip.empty?
         providers = Array(d[:providers])
         where_text = providers.empty? ? "(not available in #{@tmdb_region})" : providers.join(', ')
-        help_text << "\nStreaming:  #{where_text}\n".i
-        help_text << "Popularity: #{sprintf('%.1f', d[:popularity] || 0)}\n".i
+        help_text << "\nStreaming:  #{where_text}\n".it
+        help_text << "Popularity: #{sprintf('%.1f', d[:popularity] || 0)}\n".it
       end
       
-      help_text << "\nSummary:\n".b
+      help_text << "\nSummary:\n".bd
       help_text << "#{d[:summary] || 'No summary available.'}\n".fg(230)
     else
       help_text << "\nFetching detailed information...\n".fg(248)
@@ -1457,10 +1457,10 @@ class IMDBApp
   end
 
   def build_regions_help #{{{2
-    help_text = +"TMDb Streaming Provider Regions\n".b
+    help_text = +"TMDb Streaming Provider Regions\n".bd
     help_text << "=" * (@help.w - 4) << "\n\n"
     
-    help_text << "POPULAR REGIONS:\n".b
+    help_text << "POPULAR REGIONS:\n".bd
     popular_regions = [
       ['US', 'United States'], ['GB', 'United Kingdom'], ['CA', 'Canada'],
       ['AU', 'Australia'], ['DE', 'Germany'], ['FR', 'France'],
@@ -1474,7 +1474,7 @@ class IMDBApp
       help_text << "  #{code.ljust(3)} #{name}\n"
     end
     
-    help_text << "\nEUROPE:\n".b
+    help_text << "\nEUROPE:\n".bd
     europe = [
       ['AT', 'Austria'], ['BE', 'Belgium'], ['CH', 'Switzerland'],
       ['CZ', 'Czech Republic'], ['FI', 'Finland'], ['GR', 'Greece'],
@@ -1486,7 +1486,7 @@ class IMDBApp
       help_text << "  #{code.ljust(3)} #{name}\n"
     end
     
-    help_text << "\nASIA-PACIFIC:\n".b
+    help_text << "\nASIA-PACIFIC:\n".bd
     asia_pacific = [
       ['SG', 'Singapore'], ['MY', 'Malaysia'], ['TH', 'Thailand'],
       ['ID', 'Indonesia'], ['PH', 'Philippines'], ['TW', 'Taiwan'],
@@ -1497,7 +1497,7 @@ class IMDBApp
       help_text << "  #{code.ljust(3)} #{name}\n"
     end
     
-    help_text << "\nAMERICAS:\n".b
+    help_text << "\nAMERICAS:\n".bd
     americas = [
       ['AR', 'Argentina'], ['CL', 'Chile'], ['CO', 'Colombia'],
       ['PE', 'Peru'], ['UY', 'Uruguay'], ['VE', 'Venezuela']
@@ -1507,13 +1507,13 @@ class IMDBApp
       help_text << "  #{code.ljust(3)} #{name}\n"
     end
     
-    help_text << "\nUSAGE:\n".b
+    help_text << "\nUSAGE:\n".bd
     help_text << "  1. Press 'R' to change region\n"
     help_text << "  2. Enter a 2-letter country code\n"
     help_text << "  3. Or press '?' to see this list\n"
     help_text << "  4. Press Enter to confirm\n\n"
     
-    help_text << "NOTE:\n".b.fg(230)
+    help_text << "NOTE:\n".bd.fg(230)
     help_text << "  Different regions have different streaming services.\n".fg(230)
     help_text << "  Some content may not be available in all regions.\n".fg(230)
     
@@ -1547,7 +1547,7 @@ class IMDBApp
     return unless @help_mode == :search
     
     # Rebuild complete text with fixed header + scrolled content
-    header = +"IMDb Search Results for: #{@search_query}\n".b
+    header = +"IMDb Search Results for: #{@search_query}\n".bd
     header << "TAB/S-TAB=Select ENTER=Preview ESC=Cancel /=New\n".fg(248)
     header << "─" * @help.w << "\n"  # Full width
     
@@ -1680,7 +1680,7 @@ class IMDBApp
       fg     = (mark == 1 ? 2 : mark == -1 ? 1 : @genres.fg)
       line   = "#{prefix} #{genre}"[0, @genres.w]
       if i == @genres.index
-        line[2..] = line[2..].u
+        line[2..] = line[2..].ul
       end
       @genres.text << line.fg(fg) << "\n"
     end
@@ -1705,7 +1705,7 @@ class IMDBApp
     end
 
     header = "#{type_name} Wish List"
-    @wish.text = header.b + "\n" + lines.join("\n")
+    @wish.text = header.bd + "\n" + lines.join("\n")
 
     h       = @wish.h - 1
     top     = @wish.index - h/2
@@ -1728,7 +1728,7 @@ class IMDBApp
     end
 
     header = "#{type_name} Discard List"
-    @dump.text = header.b + "\n" + lines.join("\n")
+    @dump.text = header.bd + "\n" + lines.join("\n")
 
     h       = @dump.h - 1
     top     = @dump.index - h/2
@@ -1788,7 +1788,7 @@ class IMDBApp
                   end
       
       pop = (d[:popularity] || 0.0).to_f
-      buf = +"Title:      #{entry[:title]} (#{id})\n".b
+      buf = +"Title:      #{entry[:title]} (#{id})\n".bd
       buf << "Rating:     #{entry[:rating]} (#{d[:votes] || 0} votes)\n"
       buf << "Released:   #{d[:release_date]}   Country: #{d[:country] || ''}\n"
       buf << "Genres:     #{(d[:genres]||[]).join(', ')}\n"
@@ -1800,21 +1800,21 @@ class IMDBApp
       buf << "\n#{d[:summary] || ''}\n\n".fg(230)
       
       if @tmdb_key && !@tmdb_key.strip.empty?
-        buf << "Streaming in #{@tmdb_region} (TMDb)\n".b.i
-        buf << "Where:      #{where_text}\n".i
-        buf << format("Popularity: %.1f\n", pop).i
+        buf << "Streaming in #{@tmdb_region} (TMDb)\n".bd.it
+        buf << "Where:      #{where_text}\n".it
+        buf << format("Popularity: %.1f\n", pop).it
         
         # Show helpful hint for network issues
         if d[:error] == :timeout || d[:error] == :fetch_error
-          buf << "(Try 'i' to refresh cache)\n".fg(130).i
+          buf << "(Try 'i' to refresh cache)\n".fg(130).it
         end
       else
-        buf << "TMDb Data (no API key)\n".b.i
-        buf << "Set TMDb key with 'k' for streaming info\n".i
+        buf << "TMDb Data (no API key)\n".bd.it
+        buf << "Set TMDb key with 'k' for streaming info\n".it
       end
       
       if d[:type] == 'TVSeries'
-        buf << "Seasons/Ep: #{d[:seasons] || 0}/#{d[:episodes] || 0}\n".i
+        buf << "Seasons/Ep: #{d[:seasons] || 0}/#{d[:episodes] || 0}\n".it
       end
       @detail.text = buf
     else

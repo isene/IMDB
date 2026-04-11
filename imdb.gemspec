@@ -1,6 +1,6 @@
 Gem::Specification.new do |s|
   s.name        = 'imdb-terminal'
-  s.version     = '2.1.1'
+  s.version     = '2.1.2'
   s.licenses    = ['Unlicense']
   s.summary     = "Enhanced IMDb movies and series terminal browser"
   s.description = "IMDB v2.1.1: Modern poster display using termpix gem with Sixel and w3m protocol support. Discover and manage movies and TV series from IMDb's Top 250 lists. Features smart search with preview mode, advanced filtering by rating/year/genre, streaming information via TMDb, wish lists, and terminal poster display. Enhanced with jump-to-existing items, duplicate management, robust data handling, and improved HTTP timeout/error handling."
@@ -11,7 +11,7 @@ Gem::Specification.new do |s|
   s.require_paths = ['.']
   
   # Core dependencies
-  s.add_runtime_dependency 'rcurses', '~> 6.0'
+  s.add_runtime_dependency 'rcurses', '~> 7.0'
   s.add_runtime_dependency 'termpix', '~> 0.1'
   s.add_runtime_dependency 'nokogiri', '~> 1.13'
   s.add_runtime_dependency 'concurrent-ruby', '~> 1.1'
